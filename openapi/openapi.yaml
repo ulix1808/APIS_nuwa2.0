@@ -1,0 +1,1492 @@
+openapi: 3.0.3
+info:
+  title: Nuwa 2.0 API
+  description: |
+    API único detrás de **Amazon API Gateway** (región **us-east-1**): catálogo de fuentes, ingest de chunks y búsqueda (searchEngine2.0).
+    Los datos viven en **PostgreSQL** (p. ej. RDS u otra instancia). Las Lambdas acceden con **conexión directa** (`psycopg`) y credenciales en **Secrets Manager** (`NUWA_DATABASE_SECRET_ARN`). Tras **`POST /v1/auth/login`**, las rutas protegidas exigen cabecera **`Authorization: Bearer <accessToken>`** (JWT HS256).
+    Las **API Keys** de API Gateway siguen existiendo por compañía (usage plan, integración M2M); el valor se guarda **cifrado** (Fernet) en `companies.apigw_key_secret`.     El **gateway ya no exige** `x-api-key` en estas rutas; la autorización es el JWT en Lambda.
+
+    **Autenticación:** el JWT debe enviarse como `Authorization: Bearer <accessToken>`. En rutas **admin**, el body debe incluir **`clientId` y `userId` iguales** a los claims `cid` y `sub` del token; el rol efectivo se toma de **base de datos** (`nuwa_users` + `nuwa_roles`), no solo del claim.
+
+    **Admin — RBAC (resumen):**
+    - **`super_admin`:** crear/eliminar compañías; listar todas las compañías; actualizar cualquier compañía; gestionar usuarios de cualquier `clientId`.
+    - **`admin` (por tenant):** listar/actualizar solo su compañía; crear/listar/editar usuarios solo de su `client_id` (`targetClientId` debe ser el suyo).
+    - **`user`:** no puede usar endpoints admin (403).
+
+    **Search / reportes:** el `clientId` del body o query debe estar permitido por el token (`cid` o `super_admin`).
+
+    Reglas de negocio resumidas:
+    - **Admin Nuwa** (`clientId=1`, `userId=1`): fuentes siempre **públicas**.
+    - **Usuarios empresa** (`clientId≠1`): fuente **private** (solo su tenant) o **public** (todos).
+    - `riskLevel`: **1** = low, **2** = medium, **3** = high.
+  version: 1.0.0
+  contact:
+    name: Nuwa
+
+servers:
+  - url: https://yswipjmkgg.execute-api.us-east-1.amazonaws.com/prod
+    description: |
+      Prod (referencia). Tras redeploy, alinear con output CloudFormation ApiBaseUrl del stack Nuwa2ApiStack-prod.
+  - url: https://{apiId}.execute-api.us-east-1.amazonaws.com/{stage}
+    description: Plantilla (sustituir apiId/stage)
+    variables:
+      apiId:
+        default: your-api-id
+      stage:
+        default: prod
+
+tags:
+  - name: Sources
+    description: CRUD del catálogo de fuentes (tabla PostgreSQL `sources`)
+  - name: Chunks
+    description: Ingest y reemplazo de chunks (`risk_entity_chunks`)
+  - name: Search
+    description: Búsqueda difusa / RFC (función PostgreSQL `search_risk_entities` + catálogo)
+  - name: Reports
+    description: Reportes post-búsqueda (tabla `reports`, JSON extensible)
+  - name: Admin
+    description: |
+      RBAC con JWT. Requiere `Authorization: Bearer` y body `clientId`/`userId` alineados al token.
+      Ver resumen de roles en la descripción global (`info.description`).
+  - name: Auth
+    description: Login de usuarios de aplicación (sin API Key en gateway)
+
+security:
+  - BearerAuth: []
+
+paths:
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login (email y password)
+      description: |
+        **No requiere** Bearer ni `x-api-key`. Devuelve `user`, `company`, **`accessToken`** (JWT), `tokenType` y `expiresIn`.
+        El front usa ese token en `Authorization: Bearer` para el resto de rutas.
+        Si el mismo `email` existe en varias compañías, envía `clientId` para desambiguar.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: "Incluye accessToken en la cabecera Authorization Bearer en rutas protegidas"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Credenciales inválidas o usuario inactivo
+        "503":
+          description: Backend de datos no configurado
+
+  /v1/sources:
+    post:
+      tags: [Sources]
+      summary: Crear fuente en el catálogo
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSourceRequest"
+      responses:
+        "201":
+          description: Creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/sources/list:
+    post:
+      tags: [Sources]
+      summary: Listar fuentes visibles para el tenant
+      description: |
+        Devuelve fuentes con `visibility=public` o `clientId` coincidente con el del body.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListSourcesRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSourcesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/sources/get:
+    post:
+      tags: [Sources]
+      summary: Obtener una fuente por sourceId
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GetSourceRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/sources/update:
+    post:
+      tags: [Sources]
+      summary: Actualizar metadatos de la fuente
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSourceRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/sources/delete:
+    post:
+      tags: [Sources]
+      summary: Eliminar fuente y sus chunks (CASCADE en DB)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteSourceRequest"
+      responses:
+        "204":
+          description: Sin contenido
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/chunks/ingest:
+    post:
+      tags: [Chunks]
+      summary: Insertar o reemplazar chunks de una fuente
+      description: |
+        `replaceStrategy=all` borra chunks existentes de `sourceId` y luego inserta el lote (puede haber ventana breve sin datos).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestChunksRequest"
+      responses:
+        "200":
+          description: Completado (o aceptado si se procesa async)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestChunksResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/search:
+    post:
+      tags: [Search]
+      summary: Búsqueda de entidades en chunks (nombre y/o RFC)
+      description: |
+        El alcance de filas lo define solo la base de datos: chunks con `visibility=public` **más** los
+        chunks `private` cuyo `client_id` coincide con el `clientId` del body. El cliente **no** envía
+        lista de fuentes (`sourceIds`).
+
+        El backend invoca la función PostgreSQL `search_risk_entities` y enriquece cada resultado con `sourceName` desde el catálogo.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/reports/get:
+    get:
+      tags: [Reports]
+      summary: Listar o consultar reportes (query string, sin body)
+      description: |
+        Al menos uno de `clientId`, `userId` o `folio`. Opcional: `includePayload=true` (objeto completo con `payload`),
+        `nextKey` (paginación), `limit` (1–100, default 20).
+
+        **RBAC opcional:** `actorUserId` y `actorClientId` — si se envían, los resultados se filtran según rol en `nuwa_users`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: clientId
+          in: query
+          required: false
+          schema: { type: integer, format: int32 }
+        - name: userId
+          in: query
+          required: false
+          schema: { type: integer, format: int32 }
+        - name: folio
+          in: query
+          schema: { type: string }
+        - name: includePayload
+          in: query
+          schema: { type: string, enum: ["true", "false"] }
+        - name: nextKey
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: actorUserId
+          in: query
+          schema: { type: integer, format: int32 }
+        - name: actorClientId
+          in: query
+          schema: { type: integer, format: int32 }
+      responses:
+        "200":
+          description: |
+            **Listado:** `{ items, count, nextKey?, filters? }` (resúmenes camelCase por fila).
+            **Por `folio`:** un solo objeto resumen; con `includePayload=true` incluye `payload` (JSON completo guardado, mismo formato que en `report` al guardar).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReportsGetListResponse"
+                  - $ref: "#/components/schemas/ReportsGetSingleResponse"
+              examples:
+                listado:
+                  summary: Varios reportes (clientId o userId)
+                  value:
+                    items:
+                      - folio: SE-1772866470970
+                        clientId: 1
+                        userId: 42
+                        entidad: Cisco
+                        tipoConsulta: Persona Fisica o Moral
+                        fecha: "2026-03-07"
+                        hora: "12:54:31 a.m."
+                        nivelRiesgo: critical
+                        nivelRiesgoNumerico: 3
+                        totalListasOriginal: 32
+                        totalListasActivas: 32
+                        totalDescartadas: 0
+                        esActualizacion: false
+                        totalListas: 32
+                        totalMenciones: 10
+                        grokResumen: Analisis con IA no disponible.
+                        grokFalsosPositivos: 0
+                        grokConfirmados: 10
+                        createdAt: "2026-03-07T18:54:32Z"
+                        updatedAt: null
+                        status: active
+                      - folio: SE-1700000000000
+                        clientId: 1
+                        userId: 42
+                        entidad: ACME SA
+                        tipoConsulta: Persona Moral
+                        fecha: "2026-02-01"
+                        hora: "10:00:00"
+                        nivelRiesgo: clear
+                        nivelRiesgoNumerico: 0
+                        totalListas: 5
+                        totalMenciones: 0
+                        createdAt: "2026-02-01T12:00:00Z"
+                        updatedAt: null
+                        status: active
+                    count: 2
+                    nextKey: null
+                    filters:
+                      clientId: 1
+                porFolioConPayload:
+                  summary: Por folio con includePayload=true
+                  value:
+                    folio: SE-1772866470970
+                    clientId: 1
+                    userId: 42
+                    entidad: Cisco
+                    tipoConsulta: Persona Fisica o Moral
+                    fecha: "2026-03-07"
+                    hora: "12:54:31 a.m."
+                    nivelRiesgo: critical
+                    nivelRiesgoNumerico: 3
+                    totalListas: 32
+                    totalMenciones: 10
+                    grokResumen: Analisis con IA no disponible.
+                    createdAt: "2026-03-07T18:54:32Z"
+                    status: active
+                    payload:
+                      folio: SE-1772866470970
+                      entidad: Cisco
+                      tipoConsulta: Persona Fisica o Moral
+                      fecha: "2026-03-07"
+                      hora: "12:54:31 a.m."
+                      nivelRiesgo: critical
+                      nivelRiesgoNumerico: 3
+                      metadatos:
+                        totalListasOriginal: 32
+                        totalListasActivas: 32
+                        totalDescartadas: 0
+                        esActualizacion: false
+                      resumen:
+                        totalListas: 32
+                        totalMenciones: 10
+                        listasOficiales:
+                          - id: SE-1772866470354-0
+                            lista: wikidata,wd_peps
+                            entidadCoincidente: Cisco
+                            puntaje: null
+                            estado: clear
+                            descartada: false
+                        mencionesMedios:
+                          - titulo: "[PDF] Doe I v. Cisco Systems, Inc."
+                            link: https://cdn.ca9.uscourts.gov/datastore/opinions/2023/07/07/15-16909.pdf
+                            descripcion: Plaintiffs allege that shareholders presented their concerns...
+                            riesgo: "0"
+                      grokAnalisis:
+                        resumen: Analisis con IA no disponible.
+                        falsosPositivos: 0
+                        confirmados: 10
+                        analisis: []
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/reports/save:
+    post:
+      tags: [Reports]
+      summary: Crear reporte
+      description: |
+        Body: `clientId`, `userId` y el documento en `report` (o `reporte` como alias). El JSON editorial es el que persiste en `report_json` (camelCase: folio, entidad, resumen, grokAnalisis, etc.).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveReportRequest"
+            example:
+              clientId: 1
+              userId: 42
+              report:
+                folio: SE-1772866470970
+                entidad: Cisco
+                tipoConsulta: Persona Fisica o Moral
+                fecha: "2026-03-07"
+                nivelRiesgo: critical
+                nivelRiesgoNumerico: 3
+                metadatos:
+                  totalListasOriginal: 32
+                  esActualizacion: false
+                resumen:
+                  totalListas: 32
+                  totalMenciones: 10
+                grokAnalisis:
+                  resumen: Analisis con IA no disponible.
+                  falsosPositivos: 0
+                  confirmados: 10
+      responses:
+        "201":
+          description: Creado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveReportCreatedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/reports/update:
+    post:
+      tags: [Reports]
+      summary: Actualizar reporte (reemplazo completo del JSON del reporte)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportsUpdateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/ServerError"
+    put:
+      tags: [Reports]
+      summary: Igual que POST
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportsUpdateRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/reports/delete:
+    post:
+      tags: [Reports]
+      summary: Borrado lógico (status=deleted)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteReportRequest"
+      responses:
+        "200":
+          description: OK
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/admin/companies/list:
+    post:
+      tags: [Admin]
+      summary: Listar compañías
+      description: |
+        `super_admin` ve todas; **admin** solo la compañía de su `client_id`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminActorRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompaniesListResponse"
+
+  /v1/admin/companies/create:
+    post:
+      tags: [Admin]
+      summary: Crear compañía (super_admin)
+      description: |
+        Requiere **JWT** de actor `super_admin` (`Authorization: Bearer`). Registra la compañía, crea una API Key en API Gateway para ese `client_id`, la asocia al usage plan y guarda el secreto **cifrado** en BD.
+        El campo **`apiKey`** en la respuesta es el valor en claro **solo aquí** (M2M/operación); en BD queda cifrado.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCompanyRequest"
+      responses:
+        "201":
+          description: Creado; incluye `apiKey` (secreto) una sola vez
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateCompanyResponse"
+        "502":
+          description: Fallo al provisionar API Key en API Gateway (compañía revertida)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /v1/admin/companies/update:
+    post:
+      tags: [Admin]
+      summary: Actualizar compañía
+      description: |
+        `super_admin` o **admin** cuyo `client_id` coincida con `targetClientId`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCompanyRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/admin/companies/delete:
+    post:
+      tags: [Admin]
+      summary: Eliminar compañía (super_admin; falla si hay usuarios)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteCompanyRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/admin/roles/list:
+    post:
+      tags: [Admin]
+      summary: Listar roles del sistema
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminActorRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/admin/users/list:
+    post:
+      tags: [Admin]
+      summary: Listar usuarios de una compañía
+      description: |
+        `super_admin` o **admin** de la compañía indicada en `targetClientId` (por defecto la del actor).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListUsersRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/admin/users/create:
+    post:
+      tags: [Admin]
+      summary: Crear usuario
+      description: |
+        `super_admin` (cualquier `targetClientId`) o **admin** solo de su tenant. Rol `user` → 403.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: Creado
+
+  /v1/admin/users/update:
+    post:
+      tags: [Admin]
+      summary: Actualizar usuario
+      description: |
+        Misma regla que list/create según compañía del usuario objetivo. Rol `user` → 403.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/admin/users/delete:
+    post:
+      tags: [Admin]
+      summary: Desactivar usuario (isActive=false)
+      description: |
+        Mismos permisos que actualización de usuario.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteUserRequest"
+      responses:
+        "200":
+          description: OK
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Token devuelto por `POST /v1/auth/login` (`accessToken`). Claims: `sub` (user id), `cid` (clientId), `role` (slug).
+        Enviar `Authorization: Bearer <token>`.
+        En **admin**, además el body debe llevar `userId`/`clientId` coincidentes con `sub`/`cid`; la Lambda valida el rol contra BD.
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: |
+        Opcional para integraciones legacy/M2M. El stack CDK sigue creando keys por tenant en API Gateway;
+        las rutas documentadas aquí validan **JWT**, no la API Key en gateway.
+
+  schemas:
+    ActorContext:
+      type: object
+      required: [clientId, userId]
+      properties:
+        clientId:
+          type: integer
+          format: int32
+        userId:
+          type: integer
+          format: int32
+        requestId:
+          type: string
+          format: uuid
+          description: Correlación (front / Grok / logs)
+
+    CreateSourceRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [name, riskLevel, visibility]
+          properties:
+            name:
+              type: string
+              minLength: 1
+              example: SAT
+            riskLevel:
+              type: integer
+              enum: [1, 2, 3]
+            visibility:
+              type: string
+              enum: [public, private]
+            metadata:
+              type: object
+              additionalProperties: true
+              description: JSON libre (descripción, tags, etc.)
+
+    ListSourcesRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          properties:
+            limit:
+              type: integer
+              minimum: 1
+              maximum: 200
+              default: 50
+            offset:
+              type: integer
+              minimum: 0
+              default: 0
+
+    GetSourceRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [sourceId]
+          properties:
+            sourceId:
+              type: integer
+              format: int64
+
+    UpdateSourceRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [sourceId]
+          properties:
+            sourceId:
+              type: integer
+              format: int64
+            name:
+              type: string
+              minLength: 1
+            riskLevel:
+              type: integer
+              enum: [1, 2, 3]
+            visibility:
+              type: string
+              enum: [public, private]
+            metadata:
+              type: object
+              additionalProperties: true
+
+    DeleteSourceRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [sourceId]
+          properties:
+            sourceId:
+              type: integer
+              format: int64
+
+    SourceResponse:
+      type: object
+      required:
+        - sourceId
+        - name
+        - riskLevel
+        - visibility
+        - clientId
+        - createdByUserId
+        - createdAt
+        - updatedAt
+      properties:
+        sourceId:
+          type: integer
+          format: int64
+        name:
+          type: string
+        riskLevel:
+          type: integer
+          enum: [1, 2, 3]
+        visibility:
+          type: string
+          enum: [public, private]
+        clientId:
+          type: integer
+          format: int32
+        createdByUserId:
+          type: integer
+          format: int32
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ListSourcesResponse:
+      type: object
+      required: [clientId, items]
+      properties:
+        clientId:
+          type: integer
+          format: int32
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceResponse"
+        total:
+          type: integer
+          format: int32
+          description: Total aproximado o de página según implementación
+
+    ChunkItem:
+      type: object
+      required: [order, chunkText]
+      properties:
+        order:
+          type: integer
+          format: int32
+          description: Orden estable dentro del ingest
+        chunkText:
+          type: string
+          description: Texto indexable (ver docs/INGEST_CHUNKING.md)
+
+    IngestChunksRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [sourceId, replaceStrategy, chunks]
+          properties:
+            sourceId:
+              type: integer
+              format: int64
+            riskLevel:
+              type: integer
+              enum: [1, 2, 3]
+              description: Se aplica a cada fila insertada en `risk_entity_chunks`
+            visibility:
+              type: string
+              enum: [public, private]
+            entityType:
+              type: string
+              example: company
+            replaceStrategy:
+              type: string
+              enum: [all, append]
+            chunks:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/ChunkItem"
+
+    IngestChunksResponse:
+      type: object
+      required: [sourceId, status]
+      properties:
+        sourceId:
+          type: integer
+          format: int64
+        deletedChunks:
+          type: integer
+          format: int32
+        insertedChunks:
+          type: integer
+          format: int32
+        status:
+          type: string
+          enum: [completed, accepted, processing]
+        requestId:
+          type: string
+          format: uuid
+
+    SearchRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          description: Al menos uno de `query` o `rfc` debe ser no vacío
+          properties:
+            query:
+              type: string
+              description: Nombre persona/empresa (búsqueda difusa)
+              example: evcom group
+            rfc:
+              type: string
+              description: RFC (se normaliza en servidor; persona o empresa en MX)
+              example: ABC123456789
+            entityTypes:
+              type: array
+              items:
+                type: string
+            riskLevels:
+              type: array
+              items:
+                type: integer
+                enum: [1, 2, 3]
+            limit:
+              type: integer
+              minimum: 1
+              maximum: 100
+              default: 20
+            wordSimilarityThreshold:
+              type: number
+              format: float
+              default: 0.38
+
+    SearchResultItem:
+      type: object
+      required:
+        - chunkId
+        - sourceId
+        - sourceName
+        - riskLevel
+        - entityType
+        - score
+        - rankTs
+        - snippet
+      properties:
+        chunkId:
+          type: string
+          format: uuid
+        sourceId:
+          type: integer
+          format: int64
+        sourceName:
+          type: string
+          description: Desde catálogo `sources.name`
+        riskLevel:
+          type: integer
+          enum: [1, 2, 3]
+          description: Típicamente del chunk; alinear con catálogo en Lambda si aplica
+        entityType:
+          type: string
+        score:
+          type: number
+          format: float
+        rankTs:
+          type: number
+          format: float
+        snippet:
+          type: string
+          description: Extracto para reporte / Grok (puede incluir marcas HTML de resaltado)
+        chunkText:
+          type: string
+          description: Opcional; texto completo del chunk
+
+    SearchResponse:
+      type: object
+      required: [clientId, results]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        clientId:
+          type: integer
+          format: int32
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResultItem"
+
+    ReportRecord:
+      type: object
+      description: Fila en `reports`; `reportJson` admite el payload extenso del reporte (Grok, fuentes, etc.)
+      properties:
+        id:
+          type: string
+          format: uuid
+        folio:
+          type: string
+        client_id:
+          type: integer
+        created_by_user_id:
+          type: integer
+          format: int64
+        report_json:
+          type: object
+          additionalProperties: true
+        search_context:
+          type: object
+          additionalProperties: true
+        title:
+          type: string
+        status:
+          type: string
+          enum: [active, archived, deleted]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ReportsListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportRecord"
+        count:
+          type: integer
+
+    ReportSummaryItem:
+      type: object
+      description: Resumen camelCase de `reports` (listados y consulta por folio sin payload).
+      properties:
+        folio: { type: string }
+        clientId: { type: integer }
+        userId: { type: integer }
+        entidad: { type: string, nullable: true }
+        tipoConsulta: { type: string, nullable: true }
+        fecha: { type: string, nullable: true }
+        hora: { type: string, nullable: true }
+        nivelRiesgo: { type: string, nullable: true }
+        nivelRiesgoNumerico: { type: integer, nullable: true }
+        totalListasOriginal: { type: integer, nullable: true }
+        totalListasActivas: { type: integer, nullable: true }
+        totalDescartadas: { type: integer, nullable: true }
+        esActualizacion: { type: boolean, nullable: true }
+        totalListas: { type: integer, nullable: true }
+        totalMenciones: { type: integer, nullable: true }
+        grokResumen: { type: string, nullable: true }
+        grokFalsosPositivos: { type: integer, nullable: true }
+        grokConfirmados: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [active, archived, deleted] }
+
+    ReportsGetListResponse:
+      type: object
+      required: [items, count]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportSummaryItem"
+        count:
+          type: integer
+        nextKey:
+          type: string
+          nullable: true
+          description: Cursor base64 para la siguiente página; null si no hay más filas
+        filters:
+          type: object
+          additionalProperties: true
+          description: Eco de clientId/userId usados en la petición (solo claves presentes)
+
+    ReportsGetSingleResponse:
+      allOf:
+        - $ref: "#/components/schemas/ReportSummaryItem"
+        - type: object
+          properties:
+            payload:
+              type: object
+              additionalProperties: true
+              description: Solo si `includePayload=true`; documento completo tal como se guardó (camelCase editorial).
+
+    ReportEditorialPayload:
+      type: object
+      description: |
+        JSON del reporte en camelCase (folio, entidad, tipoConsulta, fecha, hora, nivelRiesgo, nivelRiesgoNumerico,
+        metadatos, resumen con listasOficiales/mencionesMedios, grokAnalisis, etc.).
+      required: [folio]
+      additionalProperties: true
+      properties:
+        folio:
+          type: string
+        entidad:
+          type: string
+        tipoConsulta:
+          type: string
+        fecha:
+          type: string
+        hora:
+          type: string
+        nivelRiesgo:
+          type: string
+        nivelRiesgoNumerico:
+          type: integer
+        metadatos:
+          type: object
+          additionalProperties: true
+        resumen:
+          type: object
+          additionalProperties: true
+        grokAnalisis:
+          type: object
+          additionalProperties: true
+      example:
+        folio: SE-1772866470970
+        entidad: Cisco
+        tipoConsulta: Persona Fisica o Moral
+        fecha: "2026-03-07"
+        hora: "12:54:31 a.m."
+        nivelRiesgo: critical
+        nivelRiesgoNumerico: 3
+        metadatos:
+          totalListasOriginal: 32
+          totalListasActivas: 32
+          totalDescartadas: 0
+          esActualizacion: false
+        resumen:
+          totalListas: 32
+          totalMenciones: 10
+          listasOficiales:
+            - id: SE-1772866470354-0
+              lista: wikidata,wd_peps
+              entidadCoincidente: Cisco
+              puntaje: null
+              estado: clear
+              descartada: false
+          mencionesMedios:
+            - titulo: "[PDF] Doe I v. Cisco Systems, Inc."
+              link: https://example.com/doc.pdf
+              descripcion: Resumen del hallazgo
+              riesgo: "0"
+        grokAnalisis:
+          resumen: Analisis con IA no disponible.
+          falsosPositivos: 0
+          confirmados: 10
+          analisis: []
+
+    SaveReportRequest:
+      allOf:
+        - type: object
+          required: [clientId, userId]
+          description: |
+            El documento editorial va en `report` (recomendado) o en `reporte` (alias legado).
+            Si envías ambos, prevalece `report`. Debe incluir `folio` y el JSON completo que persistirá en `report_json`.
+          properties:
+            clientId:
+              type: integer
+            userId:
+              type: integer
+            report:
+              $ref: "#/components/schemas/ReportEditorialPayload"
+            reporte:
+              $ref: "#/components/schemas/ReportEditorialPayload"
+        - oneOf:
+            - required: [report]
+            - required: [reporte]
+
+    SaveReportCreatedResponse:
+      type: object
+      required: [message, folio, clientId, userId, createdAt]
+      properties:
+        message:
+          type: string
+        folio:
+          type: string
+        clientId:
+          type: integer
+        userId:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    ReportsUpdateRequest:
+      allOf:
+        - type: object
+          required: [folio]
+          description: |
+            Reemplazo completo de `report_json`. Envía `report` o `reporte`; `report.folio` debe coincidir con `folio` del body.
+          properties:
+            folio:
+              type: string
+            clientId:
+              type: integer
+              description: Opcional; desambiguar si el mismo folio existe en otro tenant
+            report:
+              $ref: "#/components/schemas/ReportEditorialPayload"
+            reporte:
+              $ref: "#/components/schemas/ReportEditorialPayload"
+        - oneOf:
+            - required: [report]
+            - required: [reporte]
+
+    UpdateReportRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          properties:
+            reportId:
+              type: string
+              format: uuid
+            folio:
+              type: string
+            clientId:
+              type: integer
+              description: Tenant del reporte si se localiza por folio
+            reportJson:
+              type: object
+              additionalProperties: true
+            searchContext:
+              type: object
+              additionalProperties: true
+            title:
+              type: string
+            status:
+              type: string
+              enum: [active, archived, deleted]
+
+    DeleteReportRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          properties:
+            reportId:
+              type: string
+              format: uuid
+            folio:
+              type: string
+            clientId:
+              type: integer
+
+    AdminActorRequest:
+      type: object
+      required: [clientId, userId]
+      description: |
+        Debe coincidir con el JWT (`cid` → clientId, `sub` → userId). La Lambda rechaza si no alinea.
+      properties:
+        clientId:
+          type: integer
+          description: Igual al claim `cid` del Bearer token
+        userId:
+          type: integer
+          description: Igual al claim `sub` del Bearer token
+
+    CompaniesListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    CreateCompanyRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          required: [newClientId, name]
+          properties:
+            newClientId:
+              type: integer
+              description: Identificador de negocio `client_id` de la compañía
+            name:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        clientId:
+          type: integer
+          description: Obligatorio si hay más de un usuario con el mismo email (multi-tenant)
+
+    LoginResponse:
+      type: object
+      required: [user, company, accessToken, tokenType, expiresIn]
+      properties:
+        user:
+          type: object
+          description: Usuario sin hash de contraseña
+          properties:
+            id: { type: integer }
+            clientId: { type: integer }
+            email: { type: string }
+            fullName: { type: string }
+            roleId: { type: integer }
+            roleSlug: { type: string }
+            roleName: { type: string }
+            isActive: { type: boolean }
+        company:
+          type: object
+          properties:
+            clientId: { type: integer }
+            name: { type: string, nullable: true }
+        accessToken:
+          type: string
+          description: JWT para cabecera Authorization Bearer en el resto de rutas
+        tokenType:
+          type: string
+          example: Bearer
+        expiresIn:
+          type: integer
+          description: Segundos de validez del access token
+
+    CreateCompanyResponse:
+      type: object
+      required: [item, apiKey, apiKeyWarning]
+      properties:
+        item:
+          type: object
+          description: Fila de `companies` sin el secreto en claro; el id de key en `apigw_key_id`
+          additionalProperties: true
+        apiKey:
+          type: string
+          description: Valor secreto para cabecera x-api-key del tenant (no se repite)
+        apiKeyWarning:
+          type: string
+          description: Aviso; el mismo valor queda cifrado en `apigw_key_secret` para uso interno/M2M
+
+    UpdateCompanyRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          required: [targetClientId]
+          properties:
+            targetClientId:
+              type: integer
+            name:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+
+    DeleteCompanyRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          required: [targetClientId]
+          properties:
+            targetClientId:
+              type: integer
+
+    ListUsersRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          properties:
+            targetClientId:
+              type: integer
+              description: Por defecto la compañía del actor
+
+    CreateUserRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          required: [email, password, fullName, roleId]
+          properties:
+            targetClientId:
+              type: integer
+            email:
+              type: string
+              format: email
+            password:
+              type: string
+              minLength: 8
+            fullName:
+              type: string
+            roleId:
+              type: integer
+              description: FK `nuwa_roles.id` (1=user típico según seed)
+            isActive:
+              type: boolean
+
+    UpdateUserRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          required: [targetUserId]
+          properties:
+            targetUserId:
+              type: integer
+              format: int64
+            fullName:
+              type: string
+            roleId:
+              type: integer
+            isActive:
+              type: boolean
+            password:
+              type: string
+              minLength: 8
+
+    DeleteUserRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          required: [targetUserId]
+          properties:
+            targetUserId:
+              type: integer
+              format: int64
+
+    ErrorBody:
+      type: object
+      properties:
+        message:
+          type: string
+        code:
+          type: string
+        requestId:
+          type: string
+          format: uuid
+
+  responses:
+    BadRequest:
+      description: Solicitud inválida
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    Unauthorized:
+      description: "JWT ausente, expirado o inválido (cabecera Authorization Bearer)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    Forbidden:
+      description: Token válido pero sin permiso (p. ej. rol `user` en admin, o `clientId` no permitido)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    ServerError:
+      description: Error interno
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"

@@ -1,0 +1,4 @@
+{
+  "environment": "prod",
+  "supabaseUrl": "https://YOUR-PROJECT-ref.supabase.co"
+}
