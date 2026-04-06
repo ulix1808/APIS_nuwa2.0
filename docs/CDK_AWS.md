@@ -6,8 +6,9 @@ Documentación relacionada:
 
 - **`cdk/README.md`** — visión del stack, CORS, rutas, CI.
 - **`docs/RDS_LAMBDA.md`** — Postgres en RDS, secreto JSON, VPC, endpoints.
-- **`docs/DEPLOYED_API_TESTS.md`** — pruebas tras deploy.
+- **`docs/DEPLOYED_API_TESTS.md`** — pruebas tras deploy (curl y **`scripts/smoke_api.sh`**).
 - **`docs/API_AND_ARCHITECTURE.md`** — arquitectura y seguridad.
+- **`scripts/cdk_deploy_hint.sh`** — resumen de cambios con git y bloque listo para copiar (`deploy` + perfil AWS); detalle en §6.
 
 ---
 
@@ -37,7 +38,8 @@ pip install -r requirements.txt
 Variables típicas antes de `synth` / `deploy`:
 
 ```bash
-export AWS_PROFILE=tu-perfil          # si usas SSO o varios perfiles
+# Solo si usas un perfil nombrado en ~/.aws/config (nombre real, no un placeholder):
+# export AWS_PROFILE=nuwa-prod
 export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 export CDK_DEFAULT_REGION=us-east-1
 ```
@@ -120,7 +122,36 @@ Opcional: URL Supabase inicial:
 
 ---
 
-## 6. Validar antes de desplegar (`synth`)
+## 6. Script `cdk_deploy_hint.sh`
+
+Desde la **raíz del repo** (`APIs/`):
+
+```bash
+./scripts/cdk_deploy_hint.sh
+```
+
+**Qué hace**
+
+1. **Git:** lista archivos cambiados (working tree + staged frente a `HEAD`) y resume si conviene correr **`./scripts/bundle_lambda_deps.sh`** (p. ej. si cambió `cdk/lambdas/requirements.txt`) o si basta con **`cdk deploy`**.
+2. **Bloque copiable:** imprime el mismo orden de comandos que la §5: `export AWS_PROFILE=nuwa-prod` (por defecto), `cd cdk`, `source .venv/bin/activate`, `CDK_DEFAULT_ACCOUNT` / `CDK_DEFAULT_REGION` y `npx aws-cdk@2.170.0 deploy ...` con los `-c` de VPC/RDS alineados con **`scripts/cdk.deploy.env.example`**.
+
+**Opciones**
+
+| Flag | Efecto |
+|------|--------|
+| `--since origin/main` | Compara `git diff REF...HEAD` en lugar de cambios locales vs `HEAD`. |
+| `--force-bundle` | Incluye siempre la línea `./scripts/bundle_lambda_deps.sh` aunque no haya tocado `requirements.txt`. |
+
+**Configuración local (opcional)**
+
+- Copia **`scripts/cdk.deploy.env.example`** → **`scripts/cdk.deploy.env`** (ignorado por git) y ajusta `NUWA_*`, VPC, subnets, **`NUWA_AWS_PROFILE`** si no usas `nuwa-prod`.
+- Sin repo git, el script igual muestra el bloque de deploy y avisa que no puede clasificar cambios.
+
+**Copiar el bloque:** cada línea del apartado “Copia y pega” debe ir en una línea nueva en la terminal; los `\` al final de línea no deben tener espacios después. Si pegas todo en una sola línea, el shell no interpretará bien el comando.
+
+---
+
+## 7. Validar antes de desplegar (`synth`)
 
 Misma lista de `-c` que en `deploy`:
 
@@ -145,7 +176,7 @@ npx aws-cdk@2.170.0 synth --app "python3 app.py" \
 
 ---
 
-## 7. Qué crea el stack (resumen)
+## 8. Qué crea el stack (resumen)
 
 - **API Gateway** REST, stage `prod`.
 - **6 Lambdas**: sources, chunks, search, reports, admin, auth.
@@ -159,7 +190,7 @@ Detalle de red y secretos: **`docs/RDS_LAMBDA.md`**.
 
 ---
 
-## 8. Tiempos de deploy
+## 9. Tiempos de deploy
 
 - Cambios solo de **código** en Lambda: suele ser **rápido**.
 - Cambios de **VPC / SG / endpoints** o **muchas Lambdas en VPC**: **15–30+ minutos** es habitual (ENIs, endpoints).
@@ -167,7 +198,7 @@ Detalle de red y secretos: **`docs/RDS_LAMBDA.md`**.
 
 ---
 
-## 9. Tras un deploy exitoso
+## 10. Tras un deploy exitoso
 
 1. Outputs del stack: **`ApiBaseUrl`**, ARNs de secretos, etc.
 2. Pruebas: **`docs/DEPLOYED_API_TESTS.md`**.
@@ -175,7 +206,7 @@ Detalle de red y secretos: **`docs/RDS_LAMBDA.md`**.
 
 ---
 
-## 10. Problemas frecuentes y soluciones
+## 11. Problemas frecuentes y soluciones
 
 ### Synth / deploy
 
@@ -186,6 +217,7 @@ Detalle de red y secretos: **`docs/RDS_LAMBDA.md`**.
 | `You must either specify ... --all` | Línea de comando truncada o `...` literal | Comando completo, sin `...`. |
 | `no such file or directory: ./scripts/bundle_lambda_deps.sh` | Estás dentro de `cdk/` | Ejecuta el script desde la **raíz** del repo. |
 | `ValueError` VPC incompleta | Falta uno de los tres `-c` de red con `useDatabase` | Pasa `rdsVpcId`, `lambdaSubnetIds`, `rdsSecurityGroupId`. |
+| `AccessDenied` `GetSecretValue` **app-crypto** (identity-based) | La variable de entorno suele llevar **ARN parcial** (`...:secret:nuwa2/prod/app-crypto` **sin** `-XXXXXX`). IAM **no** empareja `.../app-crypto-*` con ese recurso (falta el guión antes del comodín). | **`cdk deploy`** con el stack actual (política que incluye explícitamente el ARN parcial + `-*`). O en IAM, añade `Resource` exacto `arn:...:secret:nuwa2/prod/app-crypto` al rol de la Lambda. |
 
 ### Runtime Lambda (login / API)
 
@@ -204,7 +236,7 @@ Detalle de red y secretos: **`docs/RDS_LAMBDA.md`**.
 
 ---
 
-## 11. Fijar contexto en `cdk.json` (opcional)
+## 12. Fijar contexto en `cdk.json` (opcional)
 
 Para no olvidar VPC en cada comando, puedes añadir en **`cdk/cdk.json`** → `"context"`:
 
@@ -218,7 +250,7 @@ Así `deploy` puede acortarse; **documenta** que esos valores son sensibles al e
 
 ---
 
-## 12. CI (GitHub Actions)
+## 13. CI (GitHub Actions)
 
 Workflow: **`.github/workflows/cdk-deploy.yml`**. Secret típico OIDC: **`AWS_ROLE_TO_ASSUME`**.
 
@@ -226,7 +258,7 @@ El pipeline debe pasar **los mismos** `-c` que en local (sobre todo VPC si usas 
 
 ---
 
-## 13. Archivos clave en el repo
+## 14. Archivos clave en el repo
 
 | Archivo | Rol |
 |---------|-----|
@@ -234,14 +266,17 @@ El pipeline debe pasar **los mismos** `-c` que en local (sobre todo VPC si usas 
 | `cdk/nuwa2/nuwa_api_stack.py` | API GW, Lambdas, IAM, VPC, endpoints, secretos. |
 | `cdk/lambdas/*.py` | Código de las funciones. |
 | `scripts/bundle_lambda_deps.sh` | Ruedas Linux para Lambdas. |
+| `scripts/cdk_deploy_hint.sh` | Ayuda: diff git + bloque `deploy` con `AWS_PROFILE` y `-c` (ver §6). |
+| `scripts/cdk.deploy.env.example` | Plantilla de variables para el hint (`NUWA_*`, perfil, VPC). |
 | `cdk/cdk.context.json` | Cache de lookups (VPC); no suele commitearse con datos sensibles; revisa política del equipo. |
 
 ---
 
-## 14. Resumen de buenas prácticas
+## 15. Resumen de buenas prácticas
 
 1. **Mismo** bloque de `-c` en cada deploy si usas **RDS + VPC**.
 2. **`lambdaSubnetIds` entre comillas** en zsh/bash.
 3. **`AWS_PROFILE`** y **`aws sso login`** antes de synth/deploy si usas SSO.
 4. **`synth`** con los mismos `-c` antes de **`deploy`** cuando cambies contexto.
 5. No mezclar deploy **con** VPC y **sin** VPC en el mismo entorno sin saber que CloudFormation **borrará** lo que ya no esté en la plantilla.
+6. **`./scripts/cdk_deploy_hint.sh`** antes de deploy para ver qué cambió en git y copiar un bloque coherente (§6).

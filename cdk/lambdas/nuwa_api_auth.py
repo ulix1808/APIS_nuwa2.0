@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nuwa_jwt import jwt_claims_from_event, jwt_int
+from nuwa_jwt import authorization_header_value, jwt_int, verify_access_token
 
 
 def require_jwt(event: dict[str, Any]) -> dict[str, Any] | str:
@@ -12,9 +12,15 @@ def require_jwt(event: dict[str, Any]) -> dict[str, Any] | str:
     Valida Authorization: Bearer. Devuelve claims o mensaje de error (para 401).
     Claims: sub (user id), cid (client_id), role (slug).
     """
-    claims = jwt_claims_from_event(event)
-    if not claims:
+    auth = authorization_header_value(event)
+    if not auth or not auth.startswith("Bearer "):
         return "Se requiere Authorization: Bearer <accessToken> (login en /v1/auth/login)."
+    raw = auth[7:].strip()
+    if not raw:
+        return "Se requiere Authorization: Bearer <accessToken> (login en /v1/auth/login)."
+    claims = verify_access_token(raw)
+    if not claims:
+        return "Token inválido o expirado. Vuelve a hacer POST /v1/auth/login."
     try:
         jwt_int(claims, "sub")
         jwt_int(claims, "cid")

@@ -65,7 +65,7 @@ cd cdk && npx aws-cdk@2.170.0 deploy --all --app "python3 app.py" -c environment
 
 Tras el deploy:
 
-1. **Probar la API:** guía con URL base, curl y criterios de aprobación → **`docs/DEPLOYED_API_TESTS.md`**. El output **`ApiBaseUrl`** es la fuente de verdad si cambia el host.
+1. **Probar la API:** guía con URL base, curl, script **`../scripts/smoke_api.sh`** (desde la raíz del repo `APIs/`) y criterios de aprobación → **`docs/DEPLOYED_API_TESTS.md`**. El output **`ApiBaseUrl`** es la fuente de verdad si cambia el host.
 2. **SSM** → parámetro `/nuwa2/prod/supabase/url` → confirma la URL HTTPS del proyecto.
 3. **Secrets Manager** → secreto `nuwa2/prod/supabase-service-role-key` → *Store a new secret value* → pega el JWT `service_role` (texto plano) o JSON `{"service_role_key":"eyJ..."}`.
 4. **Secrets Manager** → `nuwa2/<env>/app-crypto` → sustituye el JSON por valores propios: `jwt_signing_secret` (≥32 chars) y `fernet_key` (`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
@@ -76,7 +76,7 @@ Tras el deploy:
 Hay **un solo API Gateway REST** y **una URL base** por entorno (output CloudFormation **`ApiBaseUrl`**, p. ej. `https://xxxxxxxx.execute-api.us-east-1.amazonaws.com/prod/`). El stage es **`prod`**.
 
 - **Enrutamiento:** API Gateway enruta por **path + método HTTP**. Cada ruta (`/v1/sources/list`, `/v1/search`, `/v1/reports/get`, …) está asociada a **una Lambda** concreta en CDK (`nuwa_api_stack.py`). El front **no** llama a las Lambdas directamente: solo al host del API GW con el path correcto.
-- **Misma base URL:** todas las operaciones son `ApiBaseUrl + path`, por ejemplo `POST .../prod/v1/search`, `GET .../prod/v1/reports/get?...`.
+- **Misma base URL:** todas las operaciones son `ApiBaseUrl + path`, por ejemplo `POST .../prod/v1/search`, `GET` o `POST .../prod/v1/reports/get?...` (mismo listado; `POST` ayuda si `Authorization` no llega en `GET`).
 - **CORS:** el **preflight `OPTIONS`** lo atiende API Gateway (`default_cors_preflight_options`: orígenes `*`, métodos y cabeceras incluyendo `X-Api-Key`). Con integración **Lambda proxy**, el navegador también necesita cabeceras CORS en la **respuesta real** de cada método; las Lambdas las devuelven vía `nuwa_http.py` (`Access-Control-Allow-Origin: *`, etc.). Contrato detallado de paths: **`openapi/openapi.yaml`** y **`docs/API_AND_ARCHITECTURE.md`** (§ API / búsqueda).
 - **Credenciales:** login sin Bearer; después **`Authorization: Bearer <accessToken>`** en sources/chunks/search/reports/admin. Rotar `app-crypto` en producción.
 

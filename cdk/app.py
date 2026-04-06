@@ -51,6 +51,15 @@ if use_database and (_rds_vpc or _lambda_subnets or _rds_sg):
         "rds_security_group_id": _rds_sg,
     }
 
+_cdk_account = (os.environ.get("CDK_DEFAULT_ACCOUNT") or "").strip()
+if not _cdk_account:
+    raise SystemExit(
+        "CDK_DEFAULT_ACCOUNT está vacía. Suele pasar si falla `aws sts get-caller-identity` "
+        "(perfil mal configurado). Revisa AWS_PROFILE: no uses el placeholder del doc; "
+        "o desactívalo (`unset AWS_PROFILE`) para la cuenta default. "
+        "Luego: export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)"
+    )
+
 NuwaApiStack(
     app,
     f"Nuwa2ApiStack-{environment_name}",
@@ -62,7 +71,7 @@ NuwaApiStack(
     reuse_app_crypto_secret=reuse_app_crypto_secret,
     lambda_vpc_for_rds=lambda_vpc_for_rds,
     env=cdk.Environment(
-        account=os.environ.get("CDK_DEFAULT_ACCOUNT"),
+        account=_cdk_account,
         region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),
     ),
     description="Nuwa 2.0 — API Gateway + Lambdas (sources, chunks, search, reports, admin) us-east-1",

@@ -28,6 +28,7 @@ fi
 : "${NUWA_LAMBDA_SUBNET_IDS:=subnet-092397141c9ed4e58,subnet-0d78b173be4b53f2d}"
 : "${NUWA_CDK_VERSION:=2.170.0}"
 : "${CDK_DEFAULT_REGION:=us-east-1}"
+: "${NUWA_AWS_PROFILE:=nuwa-prod}"
 
 SINCE_REF=""
 FORCE_BUNDLE=false
@@ -131,16 +132,9 @@ if $NEED_BUNDLE; then
   echo ""
 fi
 
-PROFILE_LINE=""
-if [[ -n "${NUWA_AWS_PROFILE:-}" ]]; then
-  PROFILE_LINE=$'export AWS_PROFILE='"${NUWA_AWS_PROFILE}"$'\n'
-fi
-
 # shellcheck disable=SC2016
 {
-  if [[ -n "$PROFILE_LINE" ]]; then
-    printf '%s' "$PROFILE_LINE"
-  fi
+  printf '%s\n' "export AWS_PROFILE=${NUWA_AWS_PROFILE}"
   printf '%s\n' "cd cdk"
   printf '%s\n' "source .venv/bin/activate"
   printf '%s\n' 'export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)'
@@ -156,4 +150,4 @@ fi
 }
 
 echo ""
-echo "Notas: lambdaSubnetIds va entre comillas por las comas. Ajusta IDs vía scripts/cdk.deploy.env o variables NUWA_*."
+echo "Notas: lambdaSubnetIds entre comillas. Perfil AWS por defecto nuwa-prod (NUWA_AWS_PROFILE en scripts/cdk.deploy.env). Resto: variables NUWA_*."

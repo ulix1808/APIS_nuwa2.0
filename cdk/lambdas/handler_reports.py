@@ -1,7 +1,7 @@
 """
 Reportes (PostgREST Supabase o PostgreSQL directo según configuración).
 
-GET /v1/reports/get — query string (sin body):
+GET|POST /v1/reports/get — query string (body opcional en POST, ignorado):
   - Al menos uno de: clientId, userId, folio
   - Opcional: includePayload, nextKey, limit
   - RBAC opcional: actorUserId (+ actorClientId); si se envía, se filtra con nuwa_users.
@@ -382,7 +382,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     log_phase("reports_route", f"{method} {path}")
 
     try:
-        if method == "GET" and path.endswith("/reports/get"):
+        if method in ("GET", "POST") and path.endswith("/reports/get"):
             return handle_get(event)
         body = _parse_json_body(event) if method != "GET" else {}
         if method == "POST" and path.endswith("/reports/save"):

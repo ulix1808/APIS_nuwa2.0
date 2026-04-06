@@ -36,8 +36,9 @@ def mint_access_token(
     log_phase("jwt_mint", "signing")
     now = int(time.time())
     exp = now + _ttl_seconds()
+    # PyJWT ≥2 valida verify_sub por defecto: "sub" debe ser str (RFC 7519); si es int, decode falla.
     payload: dict[str, Any] = {
-        "sub": user_id,
+        "sub": str(user_id),
         "cid": client_id,
         "role": role_slug,
         "iat": now,
@@ -74,9 +75,33 @@ def verify_access_token(token: str) -> dict[str, Any] | None:
     return payload
 
 
+def _authorization_header_from_event(event: dict[str, Any]) -> str:
+    """Authorization: … tal como llega desde API Gateway (headers o multiValueHeaders, cualquier casing)."""
+    h = event.get("headers")
+    if isinstance(h, dict):
+        for key, val in h.items():
+            if key and str(key).lower() == "authorization" and isinstance(val, str) and val.strip():
+                return val.strip()
+    mvh = event.get("multiValueHeaders")
+    if isinstance(mvh, dict):
+        for key, vals in mvh.items():
+            if not key or not isinstance(vals, list) or not vals:
+                continue
+            if str(key).lower() != "authorization":
+                continue
+            v0 = vals[0]
+            if isinstance(v0, str) and v0.strip():
+                return v0.strip()
+    return ""
+
+
+def authorization_header_value(event: dict[str, Any]) -> str:
+    """Valor crudo del header Authorization (o cadena vacía)."""
+    return _authorization_header_from_event(event)
+
+
 def jwt_claims_from_event(event: dict[str, Any]) -> dict[str, Any] | None:
-    h = event.get("headers") or {}
-    auth = h.get("Authorization") or h.get("authorization") or ""
+    auth = _authorization_header_from_event(event)
     if not auth.startswith("Bearer "):
         return None
     raw = auth[7:].strip()

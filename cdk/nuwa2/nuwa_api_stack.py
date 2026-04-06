@@ -122,6 +122,7 @@ class NuwaApiStack(Stack):
             )
 
         lambda_env["NUWA_APP_CRYPTO_SECRET_ARN"] = app_crypto_secret.secret_arn
+        lambda_env["NUWA_APP_CRYPTO_SECRET_NAME"] = app_crypto_name
 
         lambda_kwargs: dict = dict(
             runtime=lambda_.Runtime.PYTHON_3_12,
@@ -271,7 +272,16 @@ class NuwaApiStack(Stack):
         # no casa con cómo IAM evalúa GetSecretValue (SecretId parcial sin sufijo). AWS documenta usar
         # Resource "*" + Condition StringLike sobre secretsmanager:SecretId.
         _ac_name = f"{TAG_VALUE_PROJECT}/{env}/app-crypto"
+        # ARN parcial (sin sufijo -XXXXXX): es lo que suele inyectar CDK en env y lo que boto3 envía a GetSecretValue.
+        # IAM NO hace coincidir .../app-crypto-* con .../app-crypto (falta el guión antes del comodín).
+        _app_crypto_arn_partial = self.format_arn(
+            service="secretsmanager",
+            resource="secret",
+            arn_format=ArnFormat.COLON_RESOURCE_NAME,
+            resource_name=_ac_name,
+        )
         app_crypto_secret_id_patterns = [
+            _app_crypto_arn_partial,
             self.format_arn(
                 service="secretsmanager",
                 resource="secret",
@@ -299,6 +309,29 @@ class NuwaApiStack(Stack):
         )
         for fn in (sources_fn, chunks_fn, search_fn, reports_fn, admin_fn, auth_fn):
             fn.add_to_role_policy(app_crypto_iam_fix)
+
+        # ARN explícito + comodín de sufijo (Secrets Manager añade 6 chars). grant_read / StringLike a veces
+        # no casan con el SecretId que envía el SDK (p. ej. secreto importado por nombre).
+        _app_crypto_arn_wildcard = self.format_arn(
+            service="secretsmanager",
+            resource="secret",
+            arn_format=ArnFormat.COLON_RESOURCE_NAME,
+            resource_name=f"{_ac_name}-*",
+        )
+        app_crypto_resource_allow = iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret",
+            ],
+            resources=[
+                app_crypto_secret.secret_arn,
+                _app_crypto_arn_partial,
+                _app_crypto_arn_wildcard,
+            ],
+        )
+        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, admin_fn, auth_fn):
+            fn.add_to_role_policy(app_crypto_resource_allow)
 
         api = apigw.RestApi(
             self,
@@ -350,7 +383,10 @@ class NuwaApiStack(Stack):
         v1.add_resource("search").add_method("POST", search_integration, api_key_required=False)
 
         reports = v1.add_resource("reports")
-        reports.add_resource("get").add_method("GET", reports_integration, api_key_required=False)
+        reports_get = reports.add_resource("get")
+        # GET y POST equivalentes: algunos proxies/clientes alteran Authorization solo en GET.
+        reports_get.add_method("GET", reports_integration, api_key_required=False)
+        reports_get.add_method("POST", reports_integration, api_key_required=False)
         reports.add_resource("save").add_method("POST", reports_integration, api_key_required=False)
         upd = reports.add_resource("update")
         upd.add_method("POST", reports_integration, api_key_required=False)

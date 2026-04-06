@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-from functools import lru_cache
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -31,8 +30,34 @@ def _coerce_app_crypto_data(data: dict[str, Any]) -> dict[str, Any]:
     return {"jwt_signing_secret": jwt_secret, "fernet_key": fk}
 
 
-@lru_cache(maxsize=1)
+def _secrets_manager_secret_id() -> str:
+    """SecretId para GetSecretValue.
+
+    - Nunca uses el string ARN *parcial* (`arn:...:secret:nuwa2/prod/app-crypto` sin sufijo):
+      Secrets Manager responde ResourceNotFound.
+    - Tras `:secret:` va el nombre lógico (`nuwa2/prod/app-crypto`) o nombre+sufijo AWS
+      (`nuwa2/prod/app-crypto-AbCdEf`); ambos son SecretId válidos.
+    - No uses regex para detectar "sufijo AWS": nombres como `.../app-crypto` terminan en
+      `-crypto` (6 letras) y confunden cualquier heurística `-XXXXXX`.
+    """
+    name = os.environ.get("NUWA_APP_CRYPTO_SECRET_NAME", "").strip()
+    if name:
+        return name
+    arn = os.environ.get("NUWA_APP_CRYPTO_SECRET_ARN", "").strip()
+    if not arn:
+        raise AppCryptoConfigError(
+            "Falta NUWA_APP_CRYPTO_SECRET_NAME, NUWA_APP_CRYPTO_SECRET_ARN o NUWA_APP_CRYPTO_CONFIG_JSON."
+        )
+    marker = ":secret:"
+    if marker in arn:
+        return arn.split(marker, 1)[1]
+    return arn
+
+
 def get_app_crypto_config() -> dict[str, Any]:
+    # Sin caché inter-invocación: si rotas app-crypto en Secrets Manager, un contenedor
+    # de Lambda (p. ej. auth) podría seguir firmando con el JWT antiguo en memoria mientras
+    # otra Lambda (p. ej. reports) ya lee el secreto nuevo → "Token inválido" en el siguiente paso.
     local = os.environ.get("NUWA_APP_CRYPTO_CONFIG_JSON", "").strip()
     if local:
         log_phase("app_crypto_config", "source=NUWA_APP_CRYPTO_CONFIG_JSON")
@@ -46,16 +71,12 @@ def get_app_crypto_config() -> dict[str, Any]:
         log_phase("app_crypto_config", "ok (local)")
         return out
 
-    arn = os.environ.get("NUWA_APP_CRYPTO_SECRET_ARN", "").strip()
-    if not arn:
-        raise AppCryptoConfigError(
-            "Falta NUWA_APP_CRYPTO_SECRET_ARN o NUWA_APP_CRYPTO_CONFIG_JSON."
-        )
+    secret_id = _secrets_manager_secret_id()
     import boto3
 
-    log_await("secretsmanager", "GetSecretValue", arn)
+    log_await("secretsmanager", "GetSecretValue", secret_id)
     sm = boto3.client("secretsmanager")
-    sec = sm.get_secret_value(SecretId=arn)
+    sec = sm.get_secret_value(SecretId=secret_id)
     log_done("secretsmanager", "GetSecretValue", "app-crypto")
     raw = (sec.get("SecretString") or "").strip()
     if not raw:

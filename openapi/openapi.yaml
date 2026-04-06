@@ -88,6 +88,9 @@ paths:
     post:
       tags: [Sources]
       summary: Crear fuente en el catálogo
+      description: |
+        Persiste en `public.sources`. **Admin Nuwa** (`clientId=1`, `userId=1`): `visibility` se fuerza a `public`.
+        El JWT debe alinearse con `clientId`/`userId` del body; `super_admin` puede actuar sobre cualquier `clientId`.
       security:
         - BearerAuth: []
       requestBody:
@@ -107,6 +110,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -115,7 +120,8 @@ paths:
       tags: [Sources]
       summary: Listar fuentes visibles para el tenant
       description: |
-        Devuelve fuentes con `visibility=public` o `clientId` coincidente con el del body.
+        Devuelve filas de `public.sources` con `visibility=public` **o** `client_id` igual al `clientId` del body (tenant en JWT).
+        Campo `total`: recuento global con el mismo filtro en modo PostgreSQL directo; en PostgREST puede omitirse.
       security:
         - BearerAuth: []
       requestBody:
@@ -135,6 +141,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -142,6 +150,8 @@ paths:
     post:
       tags: [Sources]
       summary: Obtener una fuente por sourceId
+      description: |
+        Visible si es `public` o si `client_id` de la fila coincide con el `clientId` del actor; `super_admin` ve cualquiera.
       security:
         - BearerAuth: []
       requestBody:
@@ -161,6 +171,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -168,6 +180,8 @@ paths:
     post:
       tags: [Sources]
       summary: Actualizar metadatos de la fuente
+      description: |
+        Solo `super_admin` o filas cuyo `client_id` coincide con el `clientId` del JWT (mismo criterio que delete).
       security:
         - BearerAuth: []
       requestBody:
@@ -189,6 +203,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -196,6 +212,8 @@ paths:
     post:
       tags: [Sources]
       summary: Eliminar fuente y sus chunks (CASCADE en DB)
+      description: |
+        Borrado físico en `public.sources`; `risk_entity_chunks` asociados se eliminan por FK `ON DELETE CASCADE`.
       security:
         - BearerAuth: []
       requestBody:
@@ -211,6 +229,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -219,7 +239,14 @@ paths:
       tags: [Chunks]
       summary: Insertar o reemplazar chunks de una fuente
       description: |
-        `replaceStrategy=all` borra chunks existentes de `sourceId` y luego inserta el lote (puede haber ventana breve sin datos).
+        Persiste en `public.risk_entity_chunks`. Cada fila usa **`client_id` de la fuente** (`sources.client_id`), no un valor arbitrario del cliente. El actor debe poder **mutar** esa fuente (misma regla que crear/actualizar en el catálogo): `super_admin` cualquier fuente; en otro caso la fuente debe pertenecer al tenant (`client_id` = `clientId` del body).
+
+        - **`replaceStrategy=all`**: elimina todos los chunks del `sourceId` y luego inserta el lote. En **PostgreSQL directo** va en una transacción. Con **PostgREST**, borrado e inserción son llamadas separadas (no atómicas entre sí).
+        - **`replaceStrategy=append`**: solo inserta.
+
+        **`riskLevel`**, **`visibility`** y **`entityType`** son opcionales. Si se omiten, `riskLevel` y `visibility` se toman de la fila `sources`; `entityType` por defecto es `entity`. Los elementos de `chunks` se ordenan por `order` ascendente antes de insertar.
+
+        El JWT debe alinearse con `clientId`/`userId` del body; `super_admin` puede actuar sobre cualquier `clientId` (mismo criterio que el catálogo de fuentes).
       security:
         - BearerAuth: []
       requestBody:
@@ -230,7 +257,7 @@ paths:
               $ref: "#/components/schemas/IngestChunksRequest"
       responses:
         "200":
-          description: Completado (o aceptado si se procesa async)
+          description: Completado (`status=completed`, recuento de insertados y, si aplica, borrados)
           content:
             application/json:
               schema:
@@ -239,8 +266,18 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/ServerError"
+        "503":
+          description: Backend de datos no configurado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
 
   /v1/search:
     post:
@@ -417,6 +454,57 @@ paths:
                         falsosPositivos: 0
                         confirmados: 10
                         analisis: []
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+    post:
+      tags: [Reports]
+      summary: Igual que GET (listar o consultar por query string)
+      description: |
+        Mismos query params que `GET /v1/reports/get`. Body ignorado (puede enviarse `{}`).
+        Útil cuando un proxy o cliente no reenvía `Authorization` en `GET` pero sí en `POST`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: clientId
+          in: query
+          required: false
+          schema: { type: integer, format: int32 }
+        - name: userId
+          in: query
+          required: false
+          schema: { type: integer, format: int32 }
+        - name: folio
+          in: query
+          schema: { type: string }
+        - name: includePayload
+          in: query
+          schema: { type: string, enum: ["true", "false"] }
+        - name: nextKey
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: actorUserId
+          in: query
+          schema: { type: integer, format: int32 }
+        - name: actorClientId
+          in: query
+          schema: { type: integer, format: int32 }
+      responses:
+        "200":
+          description: Misma forma que GET.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReportsGetListResponse"
+                  - $ref: "#/components/schemas/ReportsGetSingleResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -705,7 +793,7 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: |
-        Token devuelto por `POST /v1/auth/login` (`accessToken`). Claims: `sub` (user id), `cid` (clientId), `role` (slug).
+        Token devuelto por `POST /v1/auth/login` (`accessToken`). Claims: `sub` (user id como **string**, p. ej. `"42"`), `cid` (clientId), `role` (slug).
         Enviar `Authorization: Bearer <token>`.
         En **admin**, además el body debe llevar `userId`/`clientId` coincidentes con `sub`/`cid`; la Lambda valida el rol contra BD.
     ApiKeyAuth:
@@ -863,7 +951,9 @@ components:
         total:
           type: integer
           format: int32
-          description: Total aproximado o de página según implementación
+          description: |
+            Con backend **PostgreSQL directo**: total de filas que cumplen el filtro (públicas o del tenant).
+            Con **PostgREST** puede omitirse en la respuesta.
 
     ChunkItem:
       type: object
@@ -889,13 +979,18 @@ components:
             riskLevel:
               type: integer
               enum: [1, 2, 3]
-              description: Se aplica a cada fila insertada en `risk_entity_chunks`
+              description: |
+                Opcional. Si se omite, se usa `risk_level` de la fuente (`sources`).
             visibility:
               type: string
               enum: [public, private]
+              description: |
+                Opcional. Si se omite, se usa `visibility` de la fuente (`sources`).
             entityType:
               type: string
               example: company
+              description: |
+                Opcional. Por defecto `entity`. Máx. ~200 caracteres en servidor.
             replaceStrategy:
               type: string
               enum: [all, append]
@@ -907,7 +1002,7 @@ components:
 
     IngestChunksResponse:
       type: object
-      required: [sourceId, status]
+      required: [sourceId, status, insertedChunks]
       properties:
         sourceId:
           type: integer

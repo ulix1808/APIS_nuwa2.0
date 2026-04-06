@@ -411,6 +411,244 @@ def _nuwa_roles_get() -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def _iso_z(dt: Any) -> str:
+    if dt is None:
+        return ""
+    if hasattr(dt, "isoformat"):
+        s = dt.isoformat()
+        if s.endswith("+00:00"):
+            return s[:-6] + "Z"
+        return s
+    return str(dt)
+
+
+def source_row_to_api(row: dict[str, Any]) -> dict[str, Any]:
+    md = row.get("metadata")
+    if md is None or not isinstance(md, dict):
+        md = {}
+    return {
+        "sourceId": int(row["id"]),
+        "name": row["name"],
+        "riskLevel": int(row["risk_level"]),
+        "visibility": row["visibility"],
+        "clientId": int(row["client_id"]),
+        "createdByUserId": int(row["created_by_user_id"]),
+        "metadata": md,
+        "createdAt": _iso_z(row.get("created_at")),
+        "updatedAt": _iso_z(row.get("updated_at")),
+    }
+
+
+def list_sources_pg(viewer_client_id: int, limit: int, offset: int) -> tuple[int, list[dict[str, Any]]]:
+    lim = max(1, min(int(limit), 200))
+    off = max(0, int(offset))
+    where = "(visibility = 'public' OR client_id = %s)"
+    with _conn() as conn:
+        crow = conn.execute(
+            f"SELECT COUNT(*)::bigint AS n FROM public.sources WHERE {where}",
+            (viewer_client_id,),
+        ).fetchone()
+        total = int(crow["n"]) if crow else 0
+        rows = conn.execute(
+            f"""
+            SELECT id, name, risk_level, visibility, client_id, created_by_user_id,
+                   metadata, created_at, updated_at
+            FROM public.sources
+            WHERE {where}
+            ORDER BY id DESC
+            LIMIT %s OFFSET %s
+            """,
+            (viewer_client_id, lim, off),
+        ).fetchall()
+    return total, [dict(r) for r in rows]
+
+
+def get_source_visible_pg(source_id: int, viewer_client_id: int, is_super_admin: bool) -> dict[str, Any] | None:
+    with _conn() as conn:
+        if is_super_admin:
+            row = conn.execute(
+                """
+                SELECT id, name, risk_level, visibility, client_id, created_by_user_id,
+                       metadata, created_at, updated_at
+                FROM public.sources WHERE id = %s
+                """,
+                (source_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT id, name, risk_level, visibility, client_id, created_by_user_id,
+                       metadata, created_at, updated_at
+                FROM public.sources
+                WHERE id = %s AND (visibility = 'public' OR client_id = %s)
+                """,
+                (source_id, viewer_client_id),
+            ).fetchone()
+    return dict(row) if row else None
+
+
+def fetch_source_by_id_pg(source_id: int) -> dict[str, Any] | None:
+    with _conn() as conn:
+        row = conn.execute(
+            """
+            SELECT id, name, risk_level, visibility, client_id, created_by_user_id,
+                   metadata, created_at, updated_at
+            FROM public.sources WHERE id = %s
+            """,
+            (source_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def can_mutate_source_row(row: dict[str, Any], viewer_client_id: int, is_super_admin: bool) -> bool:
+    if is_super_admin:
+        return True
+    return int(row["client_id"]) == int(viewer_client_id)
+
+
+def create_source_pg(
+    *,
+    name: str,
+    risk_level: int,
+    visibility: str,
+    client_id: int,
+    created_by_user_id: int,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    sql = """
+    INSERT INTO public.sources (name, risk_level, visibility, client_id, created_by_user_id, metadata)
+    VALUES (%s, %s, %s, %s, %s, %s)
+    RETURNING id, name, risk_level, visibility, client_id, created_by_user_id, metadata, created_at, updated_at
+    """
+    vals = [name, risk_level, visibility, client_id, created_by_user_id, Json(metadata)]
+    with _conn() as conn:
+        row = conn.execute(sql, vals).fetchone()
+        conn.commit()
+    if not row:
+        raise SupabaseRestError(500, "INSERT sources sin fila")
+    return dict(row)
+
+
+def update_source_pg(
+    source_id: int,
+    *,
+    name: str | None,
+    risk_level: int | None,
+    visibility: str | None,
+    metadata: dict[str, Any] | None,
+    viewer_client_id: int,
+    is_super_admin: bool,
+) -> dict[str, Any] | None:
+    row0 = fetch_source_by_id_pg(source_id)
+    if not row0:
+        return None
+    if not can_mutate_source_row(row0, viewer_client_id, is_super_admin):
+        raise SupabaseRestError(403, "Sin permiso para actualizar esta fuente.")
+    sets: list[str] = []
+    vals: list[Any] = []
+    if name is not None:
+        sets.append("name = %s")
+        vals.append(name)
+    if risk_level is not None:
+        sets.append("risk_level = %s")
+        vals.append(int(risk_level))
+    if visibility is not None:
+        sets.append("visibility = %s")
+        vals.append(visibility)
+    if metadata is not None:
+        sets.append("metadata = %s")
+        vals.append(Json(metadata))
+    if not sets:
+        return row0
+    vals.append(source_id)
+    sql = f"""
+    UPDATE public.sources SET {", ".join(sets)}
+    WHERE id = %s
+    RETURNING id, name, risk_level, visibility, client_id, created_by_user_id, metadata, created_at, updated_at
+    """
+    with _conn() as conn:
+        row = conn.execute(sql, vals).fetchone()
+        conn.commit()
+    return dict(row) if row else None
+
+
+def delete_source_pg(source_id: int, viewer_client_id: int, is_super_admin: bool) -> str:
+    """'ok' | 'not_found' | 'forbidden'"""
+    row0 = fetch_source_by_id_pg(source_id)
+    if not row0:
+        return "not_found"
+    if not can_mutate_source_row(row0, viewer_client_id, is_super_admin):
+        return "forbidden"
+    with _conn() as conn:
+        conn.execute("DELETE FROM public.sources WHERE id = %s", (source_id,))
+        conn.commit()
+    return "ok"
+
+
+def ingest_chunks_pg(
+    source_id: int,
+    *,
+    viewer_client_id: int,
+    is_super_admin: bool,
+    replace_strategy: str,
+    chunk_texts: list[str],
+    risk_level: int | None,
+    visibility: str | None,
+    entity_type: str | None,
+) -> dict[str, Any]:
+    """
+    Inserta filas en public.risk_entity_chunks. client_id se toma de la fuente (catálogo).
+    replace_strategy: 'all' borra antes todos los chunks de source_id; 'append' solo inserta.
+    Si risk_level, visibility o entity_type son None, se toman de la fuente (entity_type default "entity").
+    """
+    row0 = fetch_source_by_id_pg(source_id)
+    if not row0:
+        raise SupabaseRestError(404, "Fuente no encontrada.")
+    if not can_mutate_source_row(row0, viewer_client_id, is_super_admin):
+        raise SupabaseRestError(403, "Sin permiso para ingestar chunks en esta fuente.")
+    if replace_strategy not in ("all", "append"):
+        raise SupabaseRestError(400, "replaceStrategy debe ser all o append.")
+    if not chunk_texts:
+        raise SupabaseRestError(400, "chunks no puede estar vacío.")
+
+    eff_rl = int(risk_level) if risk_level is not None else int(row0["risk_level"])
+    eff_vis = visibility if visibility is not None else str(row0["visibility"])
+    eff_et = (entity_type or "").strip() or "entity"
+    if eff_rl not in (1, 2, 3):
+        raise SupabaseRestError(400, "risk_level inválido.")
+    if eff_vis not in ("public", "private"):
+        raise SupabaseRestError(400, "visibility inválida.")
+
+    client_id_src = int(row0["client_id"])
+    deleted = 0
+    insert_sql = """
+    INSERT INTO public.risk_entity_chunks (client_id, risk_level, source_id, entity_type, chunk_text, visibility)
+    VALUES (%s, %s, %s, %s, %s, %s)
+    """
+    batch = [
+        (client_id_src, eff_rl, source_id, eff_et[:200], txt, eff_vis) for txt in chunk_texts
+    ]
+    with _conn() as conn:
+        if replace_strategy == "all":
+            cur = conn.execute(
+                "DELETE FROM public.risk_entity_chunks WHERE source_id = %s",
+                (source_id,),
+            )
+            deleted = int(cur.rowcount or 0)
+        with conn.cursor() as cur:
+            cur.executemany(insert_sql, batch)
+        conn.commit()
+
+    out: dict[str, Any] = {
+        "sourceId": source_id,
+        "status": "completed",
+        "insertedChunks": len(chunk_texts),
+    }
+    if replace_strategy == "all":
+        out["deletedChunks"] = deleted
+    return out
+
+
 def rest_json_pg(
     method: str,
     path: str,

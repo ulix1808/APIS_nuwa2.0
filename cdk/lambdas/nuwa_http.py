@@ -28,3 +28,12 @@ def json_response(status: int, body: dict[str, Any]) -> dict[str, Any]:
         "headers": headers,
         "body": json.dumps(body, ensure_ascii=False, default=str),
     }
+
+
+def no_content_response() -> dict[str, Any]:
+    """204 sin cuerpo (p. ej. DELETE)."""
+    return {
+        "statusCode": 204,
+        "headers": {**CORS_HEADERS},
+        "body": "",
+    }

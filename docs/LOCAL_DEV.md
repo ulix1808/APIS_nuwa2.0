@@ -8,7 +8,7 @@
 
 ## Opción recomendada para integración real
 
-Seguir **`docs/DEPLOYED_API_TESTS.md`** contra **`ApiBaseUrl`** cuando RDS y secretos en AWS estén bien configurados.
+Seguir **`docs/DEPLOYED_API_TESTS.md`** (incluye **`scripts/smoke_api.sh`**) contra **`ApiBaseUrl`** cuando RDS y secretos en AWS estén bien configurados.
 
 ## Opción: Postgres local (Docker) + invocar solo login
 
