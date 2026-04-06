@@ -9,6 +9,8 @@ from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_secretsmanager as secretsmanager
+from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_s3_deployment as s3deploy
 from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
@@ -358,6 +360,67 @@ class NuwaApiStack(Stack):
             cloud_watch_role=True,
         )
 
+        # Documentación OpenAPI estática pública (S3 website):
+        # - index.html (Swagger UI) + openapi.yaml
+        # - URL pública por endpoint de website S3 (HTTP)
+        docs_bucket = s3.Bucket(
+            self,
+            "NuwaOpenApiDocsBucket",
+            bucket_name=f"{prefix}-openapi-docs",
+            website_index_document="index.html",
+            public_read_access=True,
+            block_public_access=s3.BlockPublicAccess(
+                block_public_acls=True,
+                ignore_public_acls=True,
+                block_public_policy=False,
+                restrict_public_buckets=False,
+            ),
+            removal_policy=RemovalPolicy.RETAIN,
+            auto_delete_objects=False,
+        )
+
+        repo_root = Path(__file__).resolve().parents[2]
+        openapi_yaml = (repo_root / "openapi" / "openapi.yaml").read_text(encoding="utf-8")
+        index_html = """
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nuwa API - OpenAPI</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css" />
+    <style>
+      body { margin: 0; background: #fafafa; }
+      .topbar { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
+    <script>
+      window.ui = SwaggerUIBundle({
+        url: "./openapi.yaml",
+        dom_id: "#swagger-ui",
+        deepLinking: true,
+        displayRequestDuration: true,
+        defaultModelsExpandDepth: 1
+      });
+    </script>
+  </body>
+</html>
+""".strip()
+
+        s3deploy.BucketDeployment(
+            self,
+            "NuwaOpenApiDocsDeploy",
+            destination_bucket=docs_bucket,
+            sources=[
+                s3deploy.Source.data("index.html", index_html),
+                s3deploy.Source.data("openapi.yaml", openapi_yaml),
+            ],
+            retain_on_delete=True,
+        )
+
         sources_integration = apigw.LambdaIntegration(sources_fn)
         chunks_integration = apigw.LambdaIntegration(chunks_fn)
         search_integration = apigw.LambdaIntegration(search_fn)
@@ -457,6 +520,7 @@ class NuwaApiStack(Stack):
             secret,
             db_secret,
             app_crypto_secret,
+            docs_bucket,
         ):
             Tags.of(construct).add(TAG_PROJECT, TAG_VALUE_PROJECT)
             Tags.of(construct).add(TAG_ENVIRONMENT, env)
@@ -508,6 +572,12 @@ class NuwaApiStack(Stack):
             "AppCryptoSecretArn",
             value=app_crypto_secret.secret_arn,
             description="ARN JSON jwt_signing_secret + fernet_key (cifrado apigw_key_secret). Rotar valores en prod.",
+        )
+        CfnOutput(
+            self,
+            "OpenApiDocsWebsiteUrl",
+            value=docs_bucket.bucket_website_url,
+            description="Sitio estático público con Swagger UI + openapi.yaml (S3 website endpoint, HTTP).",
         )
 
         # Documentación operativa
