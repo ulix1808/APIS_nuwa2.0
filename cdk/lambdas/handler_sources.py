@@ -1,4 +1,4 @@
-"""Catálogo de fuentes: POST /v1/sources, /list, /get, /update, /delete."""
+"""Catálogo de fuentes y categorías (`sources`, `source_categories`)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,16 @@ from nuwa_config import DatabaseConfigError, SupabaseConfigError, ensure_data_ba
 from nuwa_errors import SupabaseRestError
 from nuwa_http import json_response, no_content_response
 from nuwa_obs_log import log_handler_enter, log_phase
+from nuwa_source_categories import (
+    SourceCategoryError,
+    create_category,
+    get_category_by_id,
+    list_categories,
+    list_categories_catalog,
+    validate_assignable_category,
+)
 from nuwa_sources import (
+    _UPDATE_CATEGORY_OMIT,
     create_source,
     delete_source,
     get_source,
@@ -19,6 +28,7 @@ from nuwa_sources import (
     resolve_create_visibility,
     update_source,
 )
+from nuwa_supabase import fetch_user_with_role
 
 
 def _response(status: int, body: dict[str, Any]) -> dict[str, Any]:
@@ -78,6 +88,108 @@ def _validate_visibility(v: Any) -> str | None:
     return None
 
 
+def _parse_include_category(body: dict[str, Any]) -> bool:
+    return bool(body.get("includeCategory"))
+
+
+def _parse_include_inactive_categories(event: dict[str, Any], body: dict[str, Any]) -> bool:
+    qs = event.get("queryStringParameters") or {}
+    raw = qs.get("includeInactiveCategories")
+    if raw is None and "includeInactiveCategories" in body:
+        raw = body.get("includeInactiveCategories")
+    if raw is None:
+        return False
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in ("1", "true", "yes")
+
+
+def _category_id_from_event(event: dict[str, Any], path: str) -> int | None:
+    pp = event.get("pathParameters") or {}
+    rid = pp.get("id")
+    if rid is not None and str(rid).isdigit():
+        return int(rid)
+    if "/source-category-id/" in path:
+        tail = path.split("/source-category-id/")[-1]
+        if tail.isdigit():
+            return int(tail)
+    return None
+
+
+def _handle_category_create(claims: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+    err = _require_actor(claims, body)
+    if err:
+        return err
+    ids = _parse_actor_ids(body)
+    if not ids:
+        return _bad("clientId y userId requeridos (enteros).")
+    _, uid = ids
+    actor = fetch_user_with_role(user_id=uid)
+    if not actor or actor["role_slug"] != "super_admin":
+        return _forbidden("Solo super_admin puede crear categorías.")
+    slug = body.get("slug")
+    name_es = body.get("nameEs")
+    name_en = body.get("nameEn")
+    is_active = bool(body.get("isActive", True))
+    try:
+        row = create_category(slug=slug, name_es=name_es, name_en=name_en, is_active=is_active)
+    except SourceCategoryError as e:
+        return _response(400, {"code": e.code, "message": e.message})
+    log_phase("source_category_create", f"id={row.get('id')}")
+    return json_response(201, row)
+
+
+def _handle_category_list(claims: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+    err = _require_actor(claims, body)
+    if err:
+        return err
+    ids = _parse_actor_ids(body)
+    if not ids:
+        return _bad("clientId y userId requeridos (enteros).")
+    _, uid = ids
+    actor = fetch_user_with_role(user_id=uid)
+    if not actor or actor["role_slug"] not in ("super_admin", "admin"):
+        return _forbidden("Solo super_admin o admin pueden listar categorías.")
+    is_active: bool | None
+    if "isActive" in body:
+        if body["isActive"] is None:
+            is_active = None
+        else:
+            is_active = bool(body["isActive"])
+    else:
+        is_active = None
+    lim = int(body.get("limit") or 50)
+    off = int(body.get("offset") or 0)
+    total, items = list_categories(is_active=is_active, limit=lim, offset=off)
+    out: dict[str, Any] = {"items": items}
+    if total is not None:
+        out["total"] = total
+    return _response(200, out)
+
+
+def _handle_category_get(event: dict[str, Any], claims: dict[str, Any], path: str) -> dict[str, Any]:
+    qs = event.get("queryStringParameters") or {}
+    try:
+        body_like = {"clientId": int(qs["clientId"]), "userId": int(qs["userId"])}
+    except (KeyError, TypeError, ValueError):
+        return _bad("Query clientId y userId (enteros) son requeridos y deben alinear el JWT.")
+    err = _require_actor(claims, body_like)
+    if err:
+        return err
+    uid = body_like["userId"]
+    actor = fetch_user_with_role(user_id=uid)
+    if not actor or actor["role_slug"] not in ("super_admin", "admin"):
+        return _forbidden("Solo super_admin o admin pueden consultar categorías.")
+    cid = _category_id_from_event(event, path)
+    if cid is None:
+        return _bad("Id de categoría inválido en la ruta.")
+    row = get_category_by_id(cid)
+    if not row:
+        return _not_found("Categoría no encontrada.")
+    log_phase("source_category_get", f"id={cid}")
+    return _response(200, row)
+
+
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     log_handler_enter("sources", event, context)
     path = (event.get("path") or "").rstrip("/")
@@ -101,6 +213,15 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     body = _body(event)
 
     try:
+        if path.endswith("/source-category-id/create") and method == "POST":
+            return _handle_category_create(claims, body)
+
+        if path.endswith("/source-category-id/list") and method == "POST":
+            return _handle_category_list(claims, body)
+
+        if method == "GET" and "/source-category-id/" in path and not path.endswith("/create"):
+            return _handle_category_get(event, claims, path)
+
         if path.endswith("/sources/delete"):
             err = _require_actor(claims, body)
             if err:
@@ -154,6 +275,21 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             meta = body.get("metadata")
             if meta is not None and not isinstance(meta, dict):
                 return _bad("metadata debe ser un objeto JSON.")
+            sc_kw: Any = _UPDATE_CATEGORY_OMIT
+            if "sourceCategoryId" in body:
+                raw_sc = body.get("sourceCategoryId")
+                if raw_sc is None:
+                    sc_kw = None
+                else:
+                    try:
+                        sc_int = int(raw_sc)
+                    except (TypeError, ValueError):
+                        return _bad("sourceCategoryId debe ser un entero o null.")
+                    try:
+                        validate_assignable_category(sc_int)
+                    except SourceCategoryError as e:
+                        return _response(400, {"code": e.code, "message": e.message})
+                    sc_kw = sc_int
             log_phase("sources_update", f"id={sid}")
             out = update_source(
                 source_id=sid,
@@ -163,6 +299,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 risk_level=rl,
                 visibility=vis,
                 metadata=meta,
+                source_category_id=sc_kw,
             )
             if out == "forbidden":
                 return _forbidden("Sin permiso para actualizar esta fuente.")
@@ -184,11 +321,13 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 sid = int(body["sourceId"])
             except (KeyError, TypeError, ValueError):
                 return _bad("sourceId requerido (entero).")
+            inc_cat = _parse_include_category(body)
             log_phase("sources_get", f"id={sid}")
             row = get_source(
                 source_id=sid,
                 viewer_client_id=cid,
                 is_super_admin=is_super_admin,
+                include_category=inc_cat,
             )
             if not row:
                 return _not_found("Fuente no encontrada o no visible para este tenant.")
@@ -206,11 +345,31 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 return _forbidden("clientId no permitido para este token.")
             lim = int(body.get("limit") or 50)
             off = int(body.get("offset") or 0)
+            inc_cat = _parse_include_category(body)
+            want_inactive_meta = _parse_include_inactive_categories(event, body)
+            if want_inactive_meta and not is_super_admin:
+                return _forbidden(
+                    "includeInactiveCategories solo está permitido para super_admin."
+                )
             log_phase("sources_list", f"clientId={cid}")
-            items, total = list_sources(viewer_client_id=cid, limit=lim, offset=off)
-            out: dict[str, Any] = {"clientId": cid, "items": items}
+            items, total = list_sources(
+                viewer_client_id=cid,
+                limit=lim,
+                offset=off,
+                include_category=inc_cat,
+            )
+            # Una sola consulta al catálogo global (sin N+1). RBAC: mismas categorías para todos los tenants.
+            cat_rows = list_categories_catalog(active_only=not want_inactive_meta)
+            out: dict[str, Any] = {
+                "success": True,
+                "clientId": cid,
+                "items": items,
+                "meta": {"categories": cat_rows},
+            }
             if total is not None:
                 out["total"] = total
+                if off + lim < total:
+                    out["nextOffset"] = off + lim
             return _response(200, out)
 
         if path.endswith("/sources"):
@@ -232,6 +391,19 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             vis = _validate_visibility(body.get("visibility"))
             if vis is None:
                 return _bad("visibility requerido: public o private.")
+            if "sourceCategoryId" not in body:
+                return _bad(
+                    "sourceCategoryId es obligatorio al crear una fuente; "
+                    "use POST /v1/source-category-id/list para elegir un id activo."
+                )
+            try:
+                scid = int(body["sourceCategoryId"])
+            except (TypeError, ValueError):
+                return _bad("sourceCategoryId debe ser un entero.")
+            try:
+                validate_assignable_category(scid)
+            except SourceCategoryError as e:
+                return _response(400, {"code": e.code, "message": e.message})
             meta = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
             vis = resolve_create_visibility(cid, uid, vis)
             log_phase("sources_create", f"name={name!r} clientId={cid}")
@@ -242,9 +414,12 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 client_id=cid,
                 created_by_user_id=uid,
                 metadata=meta,
+                source_category_id=scid,
             )
             return json_response(201, row)
 
+    except SourceCategoryError as e:
+        return _response(400, {"code": e.code, "message": e.message})
     except SupabaseRestError as e:
         return _response(
             e.status if 400 <= e.status < 600 else 500,

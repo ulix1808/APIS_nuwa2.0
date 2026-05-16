@@ -11,6 +11,8 @@ from nuwa_obs_log import log_phase
 from nuwa_pg_dispatch import can_mutate_source_row, source_row_to_api
 from nuwa_supabase import rest_json
 
+_UPDATE_CATEGORY_OMIT = object()
+
 
 def _nuwa_platform_actor(client_id: int, user_id: int) -> bool:
     return client_id == 1 and user_id == 1
@@ -43,6 +45,7 @@ def list_sources(
     viewer_client_id: int,
     limit: int,
     offset: int,
+    include_category: bool = False,
 ) -> tuple[list[dict[str, Any]], int | None]:
     """Devuelve (items en forma API, total global o None en modo PostgREST sin conteo)."""
     lim = max(1, min(int(limit), 200))
@@ -50,8 +53,10 @@ def list_sources(
     if is_database_mode():
         from nuwa_pg_dispatch import list_sources_pg
 
-        total, rows = list_sources_pg(viewer_client_id, lim, off)
-        return [source_row_to_api(r) for r in rows], total
+        total, rows = list_sources_pg(
+            viewer_client_id, lim, off, include_category=include_category
+        )
+        return [source_row_to_api(r, include_category=include_category) for r in rows], total
 
     q = urlencode(
         [
@@ -68,7 +73,10 @@ def list_sources(
         return [], None
     if not isinstance(rows, list):
         rows = [rows]
-    return [source_row_to_api(r) for r in rows], None
+    # PostgREST no devuelve join; category anidada solo en modo PostgreSQL directo.
+    return [
+        source_row_to_api(r, include_category=include_category) for r in rows
+    ], None
 
 
 def get_source(
@@ -76,12 +84,18 @@ def get_source(
     source_id: int,
     viewer_client_id: int,
     is_super_admin: bool,
+    include_category: bool = False,
 ) -> dict[str, Any] | None:
     if is_database_mode():
         from nuwa_pg_dispatch import get_source_visible_pg
 
-        row = get_source_visible_pg(source_id, viewer_client_id, is_super_admin)
-        return source_row_to_api(row) if row else None
+        row = get_source_visible_pg(
+            source_id,
+            viewer_client_id,
+            is_super_admin,
+            include_category=include_category,
+        )
+        return source_row_to_api(row, include_category=include_category) if row else None
 
     if is_super_admin:
         q = urlencode([("select", "*"), ("id", f"eq.{source_id}")])
@@ -96,7 +110,7 @@ def get_source(
     if not rows:
         return None
     row = rows[0] if isinstance(rows, list) else rows
-    return source_row_to_api(row)
+    return source_row_to_api(dict(row), include_category=include_category)
 
 
 def create_source(
@@ -107,6 +121,7 @@ def create_source(
     client_id: int,
     created_by_user_id: int,
     metadata: dict[str, Any],
+    source_category_id: int,
 ) -> dict[str, Any]:
     body = {
         "name": name,
@@ -115,6 +130,7 @@ def create_source(
         "client_id": client_id,
         "created_by_user_id": created_by_user_id,
         "metadata": metadata,
+        "source_category_id": source_category_id,
     }
     if is_database_mode():
         from nuwa_pg_dispatch import create_source_pg
@@ -126,6 +142,7 @@ def create_source(
             client_id=client_id,
             created_by_user_id=created_by_user_id,
             metadata=metadata,
+            source_category_id=source_category_id,
         )
         return source_row_to_api(row)
 
@@ -148,6 +165,7 @@ def update_source(
     risk_level: int | None,
     visibility: str | None,
     metadata: dict[str, Any] | None,
+    source_category_id: Any = _UPDATE_CATEGORY_OMIT,
 ) -> dict[str, Any] | None | str:
     """dict ok, None not_found, 'forbidden'."""
     if is_database_mode():
@@ -160,6 +178,7 @@ def update_source(
                 risk_level=risk_level,
                 visibility=visibility,
                 metadata=metadata,
+                source_category_id=source_category_id,
                 viewer_client_id=viewer_client_id,
                 is_super_admin=is_super_admin,
             )
@@ -183,6 +202,8 @@ def update_source(
         patch["visibility"] = visibility
     if metadata is not None:
         patch["metadata"] = metadata
+    if source_category_id is not _UPDATE_CATEGORY_OMIT:
+        patch["source_category_id"] = source_category_id
     if not patch:
         return source_row_to_api(row0)
     rows = rest_json("PATCH", "sources", query=f"id=eq.{source_id}", body=patch)

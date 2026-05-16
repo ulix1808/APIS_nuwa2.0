@@ -101,6 +101,11 @@ _REPORT_COLS = frozenset(
         "grok_resumen",
         "grok_falsos_positivos",
         "grok_confirmados",
+        "entity_id",
+        "parent_entity_id",
+        "group_id",
+        "group_name",
+        "group_role",
     }
 )
 
@@ -422,11 +427,16 @@ def _iso_z(dt: Any) -> str:
     return str(dt)
 
 
-def source_row_to_api(row: dict[str, Any]) -> dict[str, Any]:
+def source_row_to_api(
+    row: dict[str, Any],
+    *,
+    include_category: bool = False,
+) -> dict[str, Any]:
     md = row.get("metadata")
     if md is None or not isinstance(md, dict):
         md = {}
-    return {
+    scid = row.get("source_category_id")
+    out: dict[str, Any] = {
         "sourceId": int(row["id"]),
         "name": row["name"],
         "riskLevel": int(row["risk_level"]),
@@ -436,26 +446,64 @@ def source_row_to_api(row: dict[str, Any]) -> dict[str, Any]:
         "metadata": md,
         "createdAt": _iso_z(row.get("created_at")),
         "updatedAt": _iso_z(row.get("updated_at")),
+        "sourceCategoryId": int(scid) if scid is not None else None,
+    }
+    if include_category and scid is not None and row.get("sc_join_id") is not None:
+        out["category"] = {
+            "id": int(row["sc_join_id"]),
+            "slug": row["sc_join_slug"],
+            "nameEs": row["sc_join_name_es"],
+            "nameEn": row.get("sc_join_name_en"),
+        }
+    return out
+
+
+def category_row_to_api(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "slug": row["slug"],
+        "nameEs": row["name_es"],
+        "nameEn": row.get("name_en"),
+        "isActive": bool(row.get("is_active", True)),
+        "createdAt": _iso_z(row.get("created_at")),
+        "updatedAt": _iso_z(row.get("updated_at")),
     }
 
 
-def list_sources_pg(viewer_client_id: int, limit: int, offset: int) -> tuple[int, list[dict[str, Any]]]:
+def list_sources_pg(
+    viewer_client_id: int,
+    limit: int,
+    offset: int,
+    *,
+    include_category: bool = False,
+) -> tuple[int, list[dict[str, Any]]]:
     lim = max(1, min(int(limit), 200))
     off = max(0, int(offset))
-    where = "(visibility = 'public' OR client_id = %s)"
+    where_sql = "(s.visibility = 'public' OR s.client_id = %s)"
     with _conn() as conn:
         crow = conn.execute(
-            f"SELECT COUNT(*)::bigint AS n FROM public.sources WHERE {where}",
+            f"SELECT COUNT(*)::bigint AS n FROM public.sources s WHERE {where_sql}",
             (viewer_client_id,),
         ).fetchone()
         total = int(crow["n"]) if crow else 0
+        join_cat = ""
+        cat_cols = ""
+        if include_category:
+            join_cat = """
+            LEFT JOIN public.source_categories sc ON sc.id = s.source_category_id
+            """
+            cat_cols = """,
+                   sc.id AS sc_join_id, sc.slug AS sc_join_slug, sc.name_es AS sc_join_name_es,
+                   sc.name_en AS sc_join_name_en"""
         rows = conn.execute(
             f"""
-            SELECT id, name, risk_level, visibility, client_id, created_by_user_id,
-                   metadata, created_at, updated_at
-            FROM public.sources
-            WHERE {where}
-            ORDER BY id DESC
+            SELECT s.id, s.name, s.risk_level, s.visibility, s.client_id, s.created_by_user_id,
+                   s.metadata, s.created_at, s.updated_at, s.source_category_id
+                   {cat_cols}
+            FROM public.sources s
+            {join_cat}
+            WHERE {where_sql}
+            ORDER BY s.id DESC
             LIMIT %s OFFSET %s
             """,
             (viewer_client_id, lim, off),
@@ -463,24 +511,40 @@ def list_sources_pg(viewer_client_id: int, limit: int, offset: int) -> tuple[int
     return total, [dict(r) for r in rows]
 
 
-def get_source_visible_pg(source_id: int, viewer_client_id: int, is_super_admin: bool) -> dict[str, Any] | None:
+def get_source_visible_pg(
+    source_id: int,
+    viewer_client_id: int,
+    is_super_admin: bool,
+    *,
+    include_category: bool = False,
+) -> dict[str, Any] | None:
+    join_cat = ""
+    cat_cols = ""
+    if include_category:
+        join_cat = "LEFT JOIN public.source_categories sc ON sc.id = s.source_category_id"
+        cat_cols = ", sc.id AS sc_join_id, sc.slug AS sc_join_slug, sc.name_es AS sc_join_name_es, sc.name_en AS sc_join_name_en"
     with _conn() as conn:
         if is_super_admin:
             row = conn.execute(
-                """
-                SELECT id, name, risk_level, visibility, client_id, created_by_user_id,
-                       metadata, created_at, updated_at
-                FROM public.sources WHERE id = %s
+                f"""
+                SELECT s.id, s.name, s.risk_level, s.visibility, s.client_id, s.created_by_user_id,
+                       s.metadata, s.created_at, s.updated_at, s.source_category_id
+                       {cat_cols}
+                FROM public.sources s
+                {join_cat}
+                WHERE s.id = %s
                 """,
                 (source_id,),
             ).fetchone()
         else:
             row = conn.execute(
-                """
-                SELECT id, name, risk_level, visibility, client_id, created_by_user_id,
-                       metadata, created_at, updated_at
-                FROM public.sources
-                WHERE id = %s AND (visibility = 'public' OR client_id = %s)
+                f"""
+                SELECT s.id, s.name, s.risk_level, s.visibility, s.client_id, s.created_by_user_id,
+                       s.metadata, s.created_at, s.updated_at, s.source_category_id
+                       {cat_cols}
+                FROM public.sources s
+                {join_cat}
+                WHERE s.id = %s AND (s.visibility = 'public' OR s.client_id = %s)
                 """,
                 (source_id, viewer_client_id),
             ).fetchone()
@@ -492,7 +556,7 @@ def fetch_source_by_id_pg(source_id: int) -> dict[str, Any] | None:
         row = conn.execute(
             """
             SELECT id, name, risk_level, visibility, client_id, created_by_user_id,
-                   metadata, created_at, updated_at
+                   metadata, created_at, updated_at, source_category_id
             FROM public.sources WHERE id = %s
             """,
             (source_id,),
@@ -514,19 +578,26 @@ def create_source_pg(
     client_id: int,
     created_by_user_id: int,
     metadata: dict[str, Any],
+    source_category_id: int,
 ) -> dict[str, Any]:
     sql = """
-    INSERT INTO public.sources (name, risk_level, visibility, client_id, created_by_user_id, metadata)
-    VALUES (%s, %s, %s, %s, %s, %s)
-    RETURNING id, name, risk_level, visibility, client_id, created_by_user_id, metadata, created_at, updated_at
+    INSERT INTO public.sources (
+      name, risk_level, visibility, client_id, created_by_user_id, metadata, source_category_id
+    )
+    VALUES (%s, %s, %s, %s, %s, %s, %s)
+    RETURNING id, name, risk_level, visibility, client_id, created_by_user_id, metadata,
+              source_category_id, created_at, updated_at
     """
-    vals = [name, risk_level, visibility, client_id, created_by_user_id, Json(metadata)]
+    vals = [name, risk_level, visibility, client_id, created_by_user_id, Json(metadata), source_category_id]
     with _conn() as conn:
         row = conn.execute(sql, vals).fetchone()
         conn.commit()
     if not row:
         raise SupabaseRestError(500, "INSERT sources sin fila")
     return dict(row)
+
+
+_MISSING = object()
 
 
 def update_source_pg(
@@ -536,6 +607,7 @@ def update_source_pg(
     risk_level: int | None,
     visibility: str | None,
     metadata: dict[str, Any] | None,
+    source_category_id: Any = _MISSING,
     viewer_client_id: int,
     is_super_admin: bool,
 ) -> dict[str, Any] | None:
@@ -558,13 +630,17 @@ def update_source_pg(
     if metadata is not None:
         sets.append("metadata = %s")
         vals.append(Json(metadata))
+    if source_category_id is not _MISSING:
+        sets.append("source_category_id = %s")
+        vals.append(source_category_id)
     if not sets:
         return row0
     vals.append(source_id)
     sql = f"""
     UPDATE public.sources SET {", ".join(sets)}
     WHERE id = %s
-    RETURNING id, name, risk_level, visibility, client_id, created_by_user_id, metadata, created_at, updated_at
+    RETURNING id, name, risk_level, visibility, client_id, created_by_user_id, metadata,
+              source_category_id, created_at, updated_at
     """
     with _conn() as conn:
         row = conn.execute(sql, vals).fetchone()
@@ -583,6 +659,99 @@ def delete_source_pg(source_id: int, viewer_client_id: int, is_super_admin: bool
         conn.execute("DELETE FROM public.sources WHERE id = %s", (source_id,))
         conn.commit()
     return "ok"
+
+
+def get_source_category_by_id_pg(category_id: int) -> dict[str, Any] | None:
+    with _conn() as conn:
+        row = conn.execute(
+            """
+            SELECT id, slug, name_es, name_en, is_active, created_at, updated_at
+            FROM public.source_categories WHERE id = %s
+            """,
+            (category_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_source_categories_catalog_pg(is_active: bool | None) -> list[dict[str, Any]]:
+    """
+    Lista completa de categorías para embebidos en list sources (una query, sin paginar).
+    is_active=True → solo activas; None → todas (activas e inactivas).
+    """
+    if is_active is None:
+        sql = """
+        SELECT id, slug, name_es, name_en, is_active, created_at, updated_at
+        FROM public.source_categories
+        ORDER BY id ASC
+        """
+        params: list[Any] = []
+    else:
+        sql = """
+        SELECT id, slug, name_es, name_en, is_active, created_at, updated_at
+        FROM public.source_categories
+        WHERE is_active = %s
+        ORDER BY id ASC
+        """
+        params = [bool(is_active)]
+    with _conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_source_categories_pg(
+    is_active: bool | None,
+    limit: int,
+    offset: int,
+) -> tuple[int, list[dict[str, Any]]]:
+    lim = max(1, min(int(limit), 200))
+    off = max(0, int(offset))
+    where = ["1=1"]
+    params: list[Any] = []
+    if is_active is not None:
+        where.append("is_active = %s")
+        params.append(bool(is_active))
+    wsql = " AND ".join(where)
+    with _conn() as conn:
+        crow = conn.execute(
+            f"SELECT COUNT(*)::bigint AS n FROM public.source_categories WHERE {wsql}",
+            params,
+        ).fetchone()
+        total = int(crow["n"]) if crow else 0
+        rows = conn.execute(
+            f"""
+            SELECT id, slug, name_es, name_en, is_active, created_at, updated_at
+            FROM public.source_categories
+            WHERE {wsql}
+            ORDER BY id ASC
+            LIMIT %s OFFSET %s
+            """,
+            [*params, lim, off],
+        ).fetchall()
+    return total, [dict(r) for r in rows]
+
+
+def create_source_category_pg(
+    *,
+    slug: str,
+    name_es: str,
+    name_en: str | None,
+    is_active: bool,
+) -> dict[str, Any]:
+    sql = """
+    INSERT INTO public.source_categories (slug, name_es, name_en, is_active)
+    VALUES (%s, %s, %s, %s)
+    RETURNING id, slug, name_es, name_en, is_active, created_at, updated_at
+    """
+    vals = [slug, name_es, name_en, is_active]
+    try:
+        with _conn() as conn:
+            row = conn.execute(sql, vals).fetchone()
+            conn.commit()
+    except psycopg.errors.UniqueViolation as e:
+        raise SupabaseRestError(409, f"slug duplicado: {e}") from e
+    if not row:
+        raise SupabaseRestError(500, "INSERT source_categories sin fila")
+    return dict(row)
 
 
 def ingest_chunks_pg(

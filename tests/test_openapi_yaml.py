@@ -9,3 +9,6 @@ def test_openapi_parses() -> None:
         data = yaml.safe_load(f)
     assert data["openapi"].startswith("3.")
     assert "/v1/reports/get" in data["paths"]
+    assert "/v1/source-category-id/create" in data["paths"]
+    assert "/v1/source-category-id/list" in data["paths"]
+    assert "/v1/source-category-id/{id}" in data["paths"]

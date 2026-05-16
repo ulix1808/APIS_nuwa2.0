@@ -1,0 +1,248 @@
+================================================================================
+NUWA 2.0 — HISTORIAS DE USUARIO: ENTIDADES Y MONITOREO CONTINUO
+================================================================================
+Producto: Plataforma PLD / Screening
+Ámbito: Backend APIs (/v1/*) + pantalla Front /entities y flujo /searches
+Tenant: clientId (compañía creada en POST /v1/admin/companies/create)
+Actor: userId (nuwa_users, claim JWT sub)
+Fecha referencia: 2026-05-16
+
+Convenciones
+------------
+- Entidad = Persona Física (individual) o Persona Moral (organization) sujeta a consultas.
+- entity_id = UUID estable que agrupa consultas y reportes de la misma entidad real.
+- Consulta /search = búsqueda en catálogo (risk_entity_chunks); no crea entidad por sí sola.
+- Reporte = resultado persistido vía POST /v1/reports/save, vinculado opcionalmente a entity_id.
+
+--------------------------------------------------------------------------------
+ÉPICA E1 — REGISTRO Y DEDUPLICACIÓN DE ENTIDADES
+--------------------------------------------------------------------------------
+
+HU-E1.01 — Detectar entidad existente antes de consultar
+Como analista de cumplimiento,
+quiero que al iniciar una consulta de screening el sistema busque si ya existe
+una entidad consultada recientemente en mi compañía,
+para evitar duplicados y reutilizar el historial.
+
+Criterios de aceptación:
+- POST /v1/entities/match con clientId, userId, partyType (individual|organization) y campos según tipo:
+  * Persona moral: legalName (razón social), rfc? (opcional)
+  * Persona física: firstName, lastName, rfc?, curp? (o identifier único clasificado)
+- Solo candidatos con last_screening_at en los últimos 30 días.
+- Persona moral: si legalName+rfc presentes → match fuerte si ambos coinciden; si solo uno, match por ese campo.
+- Persona física: si nombre+rfc/curp presentes → match fuerte si ambos coinciden; si solo uno, match por ese campo.
+- Respuesta: matches[], hasStrongMatch; incluir partyTypeLabel (Persona física | Persona moral).
+- Solo entidades status != 'deleted' del mismo client_id.
+
+HU-E1.02 — Alta de entidad nueva
+Como analista,
+quiero registrar una entidad nueva cuando no existe coincidencia fuerte,
+para obtener un entity_id que usaré en reportes posteriores.
+
+Criterios:
+- POST /v1/entities/create → 201 con entityId (UUID).
+- Obligatorio: partyType, partyTypeLabel (Persona física | Persona moral).
+- PM: legalName y/o rfc; PF: firstName/lastName y/o rfc/curp (clasificar identifier si viene uno solo).
+- 409 DUPLICATE_RFC / DUPLICATE_CURP si ya existe en el tenant.
+- created_by_user_id = userId; category default screening.
+- status inicial: active; risk_level nullable hasta primer reporte.
+
+HU-E1.03 — Vincular consulta a entidad existente
+Como analista,
+cuando el modal muestra coincidencias,
+quiero elegir "Usar entidad existente" y continuar el /search sin crear duplicado.
+
+Criterios:
+- Front guarda selectedEntityId en estado de la consulta.
+- Al guardar reporte, envía entityId en POST /v1/reports/save.
+- Backend actualiza entities.last_screening_at y risk_level si el reporte trae nivel mayor.
+
+HU-E1.04 — Crear entidad desde modal tras búsqueda
+Como analista,
+quiero poder dar de alta la entidad como nueva aunque haya coincidencias débiles,
+para mantener separados dos homónimos distintos.
+
+Criterios:
+- Flujo explícito en UI; create + entityId antes o después de save según diseño acordado.
+
+--------------------------------------------------------------------------------
+ÉPICA E1b — SCREENING MÚLTIPLE Y GRUPOS
+--------------------------------------------------------------------------------
+
+HU-E1b.01 — Roles distintos PF vs PM
+Como analista,
+quiero que el dropdown Rol / Relacion muestre opciones correctas segun Persona Fisica o Moral.
+
+Criterios:
+- PF: Accionista, Apoderado Legal, Representante Legal, Consejero, Beneficiario Final, Comisario, Otro.
+- PM: Cliente, Proveedor, Contraparte, Subsidiaria, Matriz, Otro.
+- En multiples sujetos, al cambiar toggle PF/PM se actualiza la lista de roles.
+
+HU-E1b.02 — Nombre del grupo en reporte
+Como analista de un lote multipleano,
+quiero que el nombre del grupo quede guardado en el reporte para auditoria.
+
+Criterios:
+- POST /v1/reports/save acepta groupId, groupName, groupRole, parentEntityId.
+- Persistido en columnas reports y en report.metadatos.
+
+HU-E1b.03 — Asociar grupo a empresa (PM padre)
+Como analista,
+quiero asociar todos los sujetos verificados a una persona moral existente o nueva.
+
+Criterios:
+- Opcion A cerrada: un entityId por miembro; parentEntityId = PM padre.
+- Sin empresa padre: groupId + groupName identifican el lote (UI no muestra nombre si hay padre).
+- Crear PM padre antes de miembros; un reporte extra para la PM si se incluye en verificacion.
+
+HU-E1b.04 — Match con nombre completo
+Como sistema,
+debo aceptar fullName en match/create para sujetos del modo multiple.
+
+--------------------------------------------------------------------------------
+ÉPICA E2 — TRAZABILIDAD EN REPORTES
+--------------------------------------------------------------------------------
+
+HU-E2.01 — Guardar entity_id en reporte
+Como responsable de auditoría,
+quiero que cada reporte guardado incluya entity_id,
+para rastrear todas las consultas de una misma entidad.
+
+Criterios:
+- POST /v1/reports/save acepta entityId (UUID) en raíz del body (recomendado).
+- También groupId, groupName, groupRole, parentEntityId en raíz y metadatos.
+- Columnas reports.entity_id, group_id, group_name, group_role, parent_entity_id.
+- search_context JSON incluye consultaModo, entityId, groupId, groupName, parentEntityId.
+- Al guardar: actualizar entidad (last_screening_at, risk_level).
+
+HU-E2.02 — Listar reportes por entidad
+Como analista en /entities/[id],
+quiero ver todos los reportes (folios) ligados a esa entidad.
+
+Criterios:
+- POST /v1/entities/get con entityId devuelve entity + reports[] (folios, fechas, nivelRiesgo).
+- POST /v1/reports/get acepta filtro entityId (extensión).
+
+--------------------------------------------------------------------------------
+ÉPICA E3 — GESTIÓN DE ENTIDADES (/entities)
+--------------------------------------------------------------------------------
+
+HU-E3.01 — Tabla de entidades con filtros
+Como usuario de la compañía,
+quiero ver en /entities todas las entidades con búsqueda, filtros y pestañas por categoría.
+
+Criterios:
+- POST /v1/entities/list: paginación limit/offset, search, partyType, category, riskLevel, status.
+- Columnas UI: nombre, tipo (PF/PM), país, riesgo, relaciones (fase 2), último screening.
+- Pestañas: all, screening, background_check, employee, director, vendor, client, associate.
+
+HU-E3.02 — Métricas del dashboard de entidades
+Como supervisor,
+quiero widgets con totales y riesgo alto desglosado.
+
+Criterios:
+- POST /v1/entities/stats →
+  totalEntities, inReviewCount (status under_review|flagged),
+  individualsCount, individualsHighRisk,
+  organizationsCount, organizationsHighRisk,
+  highRiskTotal, highRiskPercent.
+- high/critical cuentan como riesgo alto (alinear con front).
+
+HU-E3.03 — Editar entidad
+Como analista,
+quiero actualizar nombre, identificadores, categoría, país y estado operativo.
+
+Criterios:
+- POST /v1/entities/update; no permite cambiar client_id.
+
+HU-E3.04 — Eliminar entidad (lógico)
+Como admin de tenant,
+quiero desactivar entidades que ya no aplican sin borrar historial de reportes.
+
+Criterios:
+- POST /v1/entities/delete → status=deleted, deleted_at, deleted_by_user_id.
+- Reportes históricos conservan entity_id para auditoría.
+
+HU-E3.06 — Relaciones entre entidades (fase 2)
+Como analista,
+quiero ver en la columna Relaciones si la entidad aparece en documentos del cliente
+o fue consultada por otros usuarios.
+
+Criterios: análisis batch / grafo; fuera de MVP.
+
+HU-E3.05 — Importar / exportar (fase 2)
+Como operador,
+quiero importar y exportar CSV de entidades (botones ya en UI).
+
+Criterios: fuera de MVP backend; documentar como HU futura.
+
+--------------------------------------------------------------------------------
+ÉPICA E4 — MONITOREO CONTINUO
+--------------------------------------------------------------------------------
+
+HU-E4.01 — Activar monitoreo al consultar
+Como analista en /searches,
+quiero marcar "Monitoreo Continuo" con frecuencia y fuentes después de tener entidad registrada.
+
+Criterios:
+- No se puede activar monitoreo sin entity_id válido (entidad creada o vinculada en consulta anterior).
+- POST /v1/entities/monitoring/upsert → 400 si entityId ausente o entidad inexistente.
+- Frecuencias: weekly, monthly, semi-annual, annual.
+- Fuentes: compliance, media.
+- Calcula next_run_at según frecuencia.
+
+HU-E4.02 — Gestionar monitoreo desde /entities
+Como analista,
+quiero cambiar frecuencia o desactivar monitoreo desde la ficha o tabla de entidad.
+
+Criterios:
+- Mismo endpoint upsert o PATCH dedicado.
+- Listado POST /v1/entities/monitoring/list para pantalla Monitoreo Continuo (sidebar).
+
+HU-E4.03 — Ejecución programada (scheduler — fase backend separada)
+Como sistema,
+debo ejecutar /search + /reports/save para entidades con next_run_at <= now() y monitoring_enabled.
+
+Criterios:
+- Job lee entity_monitoring + entities.
+- Si sources incluye compliance → flujo listas; si media → flujo medios (definición técnica en PLAN).
+- Actualiza last_run_at, next_run_at; escribe fila en entity_monitoring_runs (log).
+
+HU-E4.04 — Alertas por cambio de riesgo o nuevos hallazgos (fase 2)
+Como analista,
+quiero recibir alertas si el nivel de riesgo sube o aparecen coincidencias nuevas vs report_json anterior.
+
+Criterios:
+- Tabla entity_alerts; comparación diff entre último y penúltimo report_json.
+- Tipos: risk_change, new_match, new_media_mention.
+- API list/dismiss en iteración posterior.
+
+--------------------------------------------------------------------------------
+ÉPICA E5 — SEGURIDAD Y MULTI-TENANT
+--------------------------------------------------------------------------------
+
+HU-E5.01 — Aislamiento por compañía
+Todas las rutas /v1/entities/* validan JWT y que clientId del body = cid del token
+(salvo super_admin con reglas existentes).
+
+HU-E5.02 — Auditoría
+created_by_user_id y updated_by en entidades; monitoring configurado por userId.
+
+--------------------------------------------------------------------------------
+DEPENDENCIAS ENTRE HISTORIAS
+--------------------------------------------------------------------------------
+E1.01 → E1.02/E1.03 → E2.01 → E3.* → E4.01
+E4.03 depende de E4.01 + E2.01
+E4.04 depende de E4.03 + histórico de reportes
+
+--------------------------------------------------------------------------------
+FUERA DE ALCANCE MVP (documentado)
+--------------------------------------------------------------------------------
+- Relaciones entre entidades (grafo)
+- Import/export masivo
+- Scheduler y alertas implementados (solo esquema + APIs de configuración)
+- Sincronización bidireccional con Supabase del front legacy
+
+================================================================================
+FIN
+================================================================================

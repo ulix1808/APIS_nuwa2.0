@@ -249,6 +249,13 @@ class NuwaApiStack(Stack):
             handler="handler_reports.handler",
             **lambda_kwargs,
         )
+        entities_fn = lambda_.Function(
+            self,
+            "EntitiesLambda",
+            function_name=f"{prefix}-lambda-entities",
+            handler="handler_entities.handler",
+            **lambda_kwargs,
+        )
         admin_fn = lambda_.Function(
             self,
             "AdminLambda",
@@ -264,7 +271,7 @@ class NuwaApiStack(Stack):
             **lambda_kwargs,
         )
 
-        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, admin_fn, auth_fn):
             url_param.grant_read(fn)
             secret.grant_read(fn)
             db_secret.grant_read(fn)
@@ -309,7 +316,7 @@ class NuwaApiStack(Stack):
                 "StringLike": {"secretsmanager:SecretId": app_crypto_secret_id_patterns}
             },
         )
-        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, admin_fn, auth_fn):
             fn.add_to_role_policy(app_crypto_iam_fix)
 
         # ARN explícito + comodín de sufijo (Secrets Manager añade 6 chars). grant_read / StringLike a veces
@@ -332,7 +339,7 @@ class NuwaApiStack(Stack):
                 _app_crypto_arn_wildcard,
             ],
         )
-        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, admin_fn, auth_fn):
             fn.add_to_role_policy(app_crypto_resource_allow)
 
         api = apigw.RestApi(
@@ -425,6 +432,7 @@ class NuwaApiStack(Stack):
         chunks_integration = apigw.LambdaIntegration(chunks_fn)
         search_integration = apigw.LambdaIntegration(search_fn)
         reports_integration = apigw.LambdaIntegration(reports_fn)
+        entities_integration = apigw.LambdaIntegration(entities_fn)
         admin_integration = apigw.LambdaIntegration(admin_fn)
         auth_integration = apigw.LambdaIntegration(auth_fn)
 
@@ -439,11 +447,28 @@ class NuwaApiStack(Stack):
         sources.add_resource("update").add_method("POST", sources_integration, api_key_required=False)
         sources.add_resource("delete").add_method("POST", sources_integration, api_key_required=False)
 
+        src_cat = v1.add_resource("source-category-id")
+        src_cat.add_resource("create").add_method("POST", sources_integration, api_key_required=False)
+        src_cat.add_resource("list").add_method("POST", sources_integration, api_key_required=False)
+        src_cat.add_resource("{id}").add_method("GET", sources_integration, api_key_required=False)
+
         v1.add_resource("chunks").add_resource("ingest").add_method(
             "POST", chunks_integration, api_key_required=False
         )
 
         v1.add_resource("search").add_method("POST", search_integration, api_key_required=False)
+
+        entities = v1.add_resource("entities")
+        entities.add_resource("match").add_method("POST", entities_integration, api_key_required=False)
+        entities.add_resource("create").add_method("POST", entities_integration, api_key_required=False)
+        entities.add_resource("list").add_method("POST", entities_integration, api_key_required=False)
+        entities.add_resource("get").add_method("POST", entities_integration, api_key_required=False)
+        entities.add_resource("update").add_method("POST", entities_integration, api_key_required=False)
+        entities.add_resource("delete").add_method("POST", entities_integration, api_key_required=False)
+        entities.add_resource("stats").add_method("POST", entities_integration, api_key_required=False)
+        emon = entities.add_resource("monitoring")
+        emon.add_resource("upsert").add_method("POST", entities_integration, api_key_required=False)
+        emon.add_resource("list").add_method("POST", entities_integration, api_key_required=False)
 
         reports = v1.add_resource("reports")
         reports_get = reports.add_resource("get")

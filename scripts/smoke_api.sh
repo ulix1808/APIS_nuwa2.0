@@ -114,6 +114,9 @@ curl_json POST "$BASE/v1/reports/get?clientId=$CID&limit=5" "{}"
 step "POST /v1/sources/list"
 curl_json POST "$BASE/v1/sources/list" "$ACTOR"
 
+step "POST /v1/source-category-id/list"
+curl_json POST "$BASE/v1/source-category-id/list" "$ACTOR"
+
 step "POST /v1/search"
 SEARCH=$(python3 -c "import json; a=json.loads('$ACTOR'); a.update({'query':'nuwa','limit':5}); print(json.dumps(a))")
 curl_json POST "$BASE/v1/search" "$SEARCH"
@@ -130,8 +133,11 @@ curl_json POST "$BASE/v1/admin/users/list" "$ACTOR"
 if $WRITE; then
   TS=$(date +%s)
   NAME="smoke-source-$TS"
+  step "resolver sourceCategoryId para create"
+  curl_json POST "$BASE/v1/source-category-id/list" "$ACTOR"
+  CAT_ID=$(python3 -c "import json; print(json.load(open('$BODY'))['items'][0]['id'])")
   step "POST /v1/sources (create: $NAME)"
-  CREATE=$(python3 -c "import json; a=json.loads('$ACTOR'); a.update({'name':'$NAME','riskLevel':1,'visibility':'public'}); print(json.dumps(a))")
+  CREATE=$(python3 -c "import json; a=json.loads('$ACTOR'); a.update({'name':'$NAME','riskLevel':1,'visibility':'public','sourceCategoryId':int('$CAT_ID')}); print(json.dumps(a))")
   curl_json POST "$BASE/v1/sources" "$CREATE"
   SRC_ID=$(python3 -c "import json; print(json.load(open('$BODY'))['sourceId'])")
 

@@ -1,5 +1,7 @@
 # PostgreSQL en RDS + Lambdas Nuwa
 
+**Esquema de tablas y columnas:** [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md) (referencia para GitHub y el equipo).
+
 ## Seguridad
 
 - **No pegues contraseñas en el repositorio ni en tickets.** Rota la contraseña maestra de RDS si se expuso en un chat.
@@ -26,7 +28,10 @@ psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260406130200_reports_drop_legac
 psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260406140000_companies_apigw_key_id.sql
 psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260406150000_companies_apigw_key_secret.sql
 psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260406160000_nuwa_user_nuwa_space.sql
+psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260516120000_entities_monitoring.sql
 ```
+
+O ejecuta todas en orden: `./scripts/apply_migrations.sh` (requiere `PGPASSWORD` o `~/.pgpass`).
 
 4. El usuario **`postgres`** en RDS tiene privilegios suficientes para saltarse RLS en la práctica; si usas otro rol, dale **`BYPASSRLS`** o define políticas (las migraciones activan RLS sin políticas en el repo).
 

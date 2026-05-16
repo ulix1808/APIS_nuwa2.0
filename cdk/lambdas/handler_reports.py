@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from nuwa_config import DatabaseConfigError, SupabaseConfigError, ensure_data_backend
+from nuwa_config import DatabaseConfigError, SupabaseConfigError, ensure_data_backend, is_database_mode
 from nuwa_errors import SupabaseRestError
 from nuwa_http import CORS_HEADERS
 from nuwa_rbac import can_read_report
@@ -257,16 +257,51 @@ def handle_save(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
     meta = extract_report_metadata(reporte)
     db_meta = metadata_to_db_row(meta)
     created_at = now_iso_z()
+
+    metadatos = reporte.get("metadatos") if isinstance(reporte.get("metadatos"), dict) else {}
+    entity_id = body.get("entityId") or metadatos.get("entityId")
+    parent_entity_id = body.get("parentEntityId") or metadatos.get("parentEntityId")
+    group_id = body.get("groupId") or metadatos.get("groupId")
+    group_name = body.get("groupName") or metadatos.get("groupName")
+    group_role = body.get("groupRole") or metadatos.get("groupRole")
+    search_context = body.get("searchContext") if isinstance(body.get("searchContext"), dict) else {}
+    if not search_context and isinstance(metadatos, dict):
+        for k in ("consultaModo", "entityId", "parentEntityId", "groupId", "groupName", "groupRole", "partyType"):
+            if metadatos.get(k) is not None:
+                search_context[k] = metadatos[k]
+
     row: dict[str, Any] = {
         "folio": folio,
         "client_id": client_id,
         "created_by_user_id": user_id,
         "report_json": reporte,
-        "search_context": {},
+        "search_context": search_context,
         "status": "active",
         **db_meta,
     }
+    if entity_id:
+        row["entity_id"] = str(entity_id)
+    if parent_entity_id:
+        row["parent_entity_id"] = str(parent_entity_id)
+    if group_id:
+        row["group_id"] = str(group_id)
+    if group_name:
+        row["group_name"] = str(group_name)
+    if group_role:
+        row["group_role"] = str(group_role)
+
     out = rest_json("POST", "reports", body=row)
+
+    if entity_id and is_database_mode():
+        from nuwa_entities_pg import touch_entity_after_report_pg
+
+        touch_entity_after_report_pg(
+            entity_id=str(entity_id),
+            client_id=client_id,
+            folio=folio,
+            nivel_riesgo=meta.get("nivel_riesgo"),
+            nivel_numerico=meta.get("nivel_riesgo_numerico"),
+        )
     item = out[0] if isinstance(out, list) else out
     return _resp(
         201,

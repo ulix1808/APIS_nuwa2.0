@@ -15,6 +15,11 @@ info:
 
     **Search / reportes:** el `clientId` del body o query debe estar permitido por el token (`cid` o `super_admin`).
 
+    **Entidades (PF/PM):** registro en entities por tenant; deduplicación en POST /v1/entities/match (ventana 30 días);
+    cada consulta guardada en POST /v1/reports/save con entityId. Screening múltiple: un entityId por sujeto,
+    parentEntityId si hay empresa padre, correlación por groupId + groupName (sin empresa padre) o solo parentEntityId (con empresa).
+    Un folio/reporte por sujeto (+ uno adicional si se verifica la PM padre).
+
     Reglas de negocio resumidas:
     - **Admin Nuwa** (`clientId=1`, `userId=1`): fuentes siempre **públicas**.
     - **Usuarios empresa** (`clientId≠1`): fuente **private** (solo su tenant) o **public** (todos).
@@ -44,6 +49,11 @@ tags:
     description: Búsqueda difusa / RFC (función PostgreSQL `search_risk_entities` + catálogo)
   - name: Reports
     description: Reportes post-búsqueda (tabla `reports`, JSON extensible)
+  - name: Entities
+    description: |
+      Entidades de negocio (Persona Física / Persona Moral) por `client_id`. Match pre-consulta (30 días),
+      alta con campos estructurados PF/PM, `relationshipRole`, screening múltiple (`fullName`, `parentEntityId`),
+      monitoreo continuo. Ver `docs/ENTIDADES_ROLES_Y_GRUPOS.md`.
   - name: Admin
     description: |
       RBAC con JWT. Requiere `Authorization: Bearer` y body `clientId`/`userId` alineados al token.
@@ -91,6 +101,7 @@ paths:
       description: |
         Persiste en `public.sources`. **Admin Nuwa** (`clientId=1`, `userId=1`): `visibility` se fuerza a `public`.
         El JWT debe alinearse con `clientId`/`userId` del body; `super_admin` puede actuar sobre cualquier `clientId`.
+        **Obligatorio** `sourceCategoryId`: FK a `source_categories` (debe existir y estar **activa**). Clientes antiguos que no envíen el campo reciben **400** con mensaje explícito (no hay categoría por defecto).
       security:
         - BearerAuth: []
       requestBody:
@@ -99,6 +110,14 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/CreateSourceRequest"
+            example:
+              clientId: 1
+              userId: 1
+              name: SAT
+              riskLevel: 1
+              visibility: public
+              sourceCategoryId: 1
+              metadata: {}
       responses:
         "201":
           description: Creada
@@ -106,6 +125,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SourceResponse"
+              example:
+                sourceId: 42
+                name: SAT
+                riskLevel: 1
+                visibility: public
+                clientId: 1
+                createdByUserId: 1
+                sourceCategoryId: 1
+                metadata: {}
+                createdAt: "2026-05-02T12:00:00Z"
+                updatedAt: "2026-05-02T12:00:00Z"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -121,9 +151,22 @@ paths:
       summary: Listar fuentes visibles para el tenant
       description: |
         Devuelve filas de `public.sources` con `visibility=public` **o** `client_id` igual al `clientId` del body (tenant en JWT).
+        Respuesta incluye **`success`**, **`meta.categories`** (catálogo completo en una sola carga; por defecto solo categorías **activas**) para poblar dropdowns sin segunda llamada.
+        **`meta.categories`** es **global** (no hay segregación por tenant): cualquier usuario que pueda listar fuentes ve el mismo conjunto de categorías activas.
+        Query opcional **`includeInactiveCategories=true`**: incluye también inactivas; **solo `super_admin`** (equivale al mismo flag en el body JSON).
         Campo `total`: recuento global con el mismo filtro en modo PostgreSQL directo; en PostgREST puede omitirse.
+        `nextOffset`: presente si hay más páginas cuando `total` está disponible.
+        Opcional `includeCategory: true`: incluye objeto `category` anidado por ítem (**solo** con backend PostgreSQL directo; con PostgREST solo verás `sourceCategoryId`).
       security:
         - BearerAuth: []
+      parameters:
+        - name: includeInactiveCategories
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Solo **super_admin**. Si es true, `meta.categories` lista activas e inactivas.
       requestBody:
         required: true
         content:
@@ -152,6 +195,7 @@ paths:
       summary: Obtener una fuente por sourceId
       description: |
         Visible si es `public` o si `client_id` de la fila coincide con el `clientId` del actor; `super_admin` ve cualquiera.
+        Opcional `includeCategory: true`: objeto `category` anidado (**solo** PostgreSQL directo).
       security:
         - BearerAuth: []
       requestBody:
@@ -182,6 +226,7 @@ paths:
       summary: Actualizar metadatos de la fuente
       description: |
         Solo `super_admin` o filas cuyo `client_id` coincide con el `clientId` del JWT (mismo criterio que delete).
+        Opcional `sourceCategoryId`: si se envía entero, debe referenciar categoría **existente y activa**; `null` borra la FK (fuente sin categoría).
       security:
         - BearerAuth: []
       requestBody:
@@ -231,6 +276,113 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/source-category-id/create:
+    post:
+      tags: [Sources]
+      summary: Crear categoría de fuente
+      description: |
+        Inserta en `public.source_categories`. **Solo `super_admin`.**
+        El body debe alinear `clientId` / `userId` con el JWT (como admin).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSourceCategoryRequest"
+      responses:
+        "201":
+          description: Creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceCategoryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/source-category-id/list:
+    post:
+      tags: [Sources]
+      summary: Listar categorías de fuentes
+      description: |
+        **`super_admin`** y **`admin`** (rol efectivo en BD). Paginación opcional.
+        Si omites `isActive`, se listan activas e inactivas.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListSourceCategoriesRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSourceCategoriesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/source-category-id/{id}:
+    get:
+      tags: [Sources]
+      summary: Obtener categoría por id
+      description: |
+        **`super_admin`** y **`admin`**. Query **`clientId`** y **`userId`** deben coincidir con el JWT (`cid` / `sub`).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: clientId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int32
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int32
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceCategoryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -306,6 +458,260 @@ paths:
                 $ref: "#/components/schemas/SearchResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/entities/match:
+    post:
+      tags: [Entities]
+      summary: Buscar entidades existentes (deduplicación pre-consulta)
+      description: |
+        Busca entidades del `clientId` consultadas en los **últimos 30 días** (`last_screening_at`).
+
+        **Persona moral:** `legalName` (razón social) y/o `rfc`. Si vienen ambos, la coincidencia fuerte exige ambos.
+        **Persona física:** `firstName`, `lastName` y/o `rfc`/`curp`. Si vienen nombre e identificador, la coincidencia fuerte exige ambos.
+
+        Usar **antes** de `POST /v1/search`. No persiste datos.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntityMatchRequest"
+      responses:
+        "200":
+          description: Coincidencias ordenadas por confianza
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityMatchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/entities/create:
+    post:
+      tags: [Entities]
+      summary: Crear entidad
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntityCreateRequest"
+      responses:
+        "201":
+          description: Entidad creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityCreateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: RFC o CURP duplicado en el tenant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/entities/list:
+    post:
+      tags: [Entities]
+      summary: Listar entidades (tabla /entities)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntityListRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/entities/get:
+    post:
+      tags: [Entities]
+      summary: Detalle de entidad y reportes vinculados
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntityGetRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityGetResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/entities/update:
+    post:
+      tags: [Entities]
+      summary: Actualizar entidad
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntityUpdateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntitySummary"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/entities/delete:
+    post:
+      tags: [Entities]
+      summary: Eliminar entidad (lógico)
+      description: Marca `status=deleted`. Los reportes históricos conservan `entity_id`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntityDeleteRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entityId, status]
+                properties:
+                  entityId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [deleted]
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/entities/stats:
+    post:
+      tags: [Entities]
+      summary: Métricas para widgets de /entities
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActorContext"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityStatsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/entities/monitoring/upsert:
+    post:
+      tags: [Entities]
+      summary: Configurar monitoreo continuo de una entidad
+      description: |
+        Crea o actualiza la fila en `entity_monitoring`. Requiere `entityId` de una entidad ya persistida
+        (no se permite monitoreo sin entidad). Frecuencias: weekly, monthly, semi-annual, annual.
+        Fuentes: `compliance` (sanciones, PEPs, regulatorio → flujo `/v1/search`) y `media` (medios adversos).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntityMonitoringUpsertRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityMonitoringResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/entities/monitoring/list:
+    post:
+      tags: [Entities]
+      summary: Listar entidades con monitoreo continuo
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntityMonitoringListRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityMonitoringListResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -517,7 +923,19 @@ paths:
       tags: [Reports]
       summary: Crear reporte
       description: |
-        Body: `clientId`, `userId` y el documento en `report` (o `reporte` como alias). El JSON editorial es el que persiste en `report_json` (camelCase: folio, entidad, resumen, grokAnalisis, etc.).
+        Body: `clientId`, `userId` y el documento en `report` (o `reporte` como alias). El JSON editorial persiste en `report_json`.
+
+        **Entidad (obligatorio en screening con registro):** `entityId` del sujeto verificado (PF o PM). Actualiza `entities.last_screening_at`.
+
+        **Screening múltiple** (`consultaModo: multiple` en `metadatos` / `searchContext`):
+        - **Un reporte (folio) por cada sujeto** verificado.
+        - **Un reporte adicional** para la PM padre si se incluyó en la verificación (`groupRole: parent`).
+        - Cada sujeto: su propio `entityId`; si hay empresa asociada, `parentEntityId` = entidad de la PM.
+        - Sin empresa padre: el UI no pide nombre de grupo; correlación con `groupId` + **`groupName`** (campo "Nombre del Grupo").
+        - Con empresa padre: el UI oculta "Nombre del Grupo"; correlación principal vía **`parentEntityId`** (opcional `groupName` = razón social de la PM).
+
+        Campos de grupo en raíz y en `report.metadatos`: `groupId`, `groupName`, `groupRole`, `parentEntityId`, `relationshipRole`.
+        Columnas SQL: `entity_id`, `parent_entity_id`, `group_id`, `group_name`, `group_role`.
       security:
         - BearerAuth: []
       requestBody:
@@ -526,26 +944,75 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/SaveReportRequest"
-            example:
-              clientId: 1
-              userId: 42
-              report:
-                folio: SE-1772866470970
-                entidad: Cisco
-                tipoConsulta: Persona Fisica o Moral
-                fecha: "2026-03-07"
-                nivelRiesgo: critical
-                nivelRiesgoNumerico: 3
-                metadatos:
-                  totalListasOriginal: 32
-                  esActualizacion: false
-                resumen:
-                  totalListas: 32
-                  totalMenciones: 10
-                grokAnalisis:
-                  resumen: Analisis con IA no disponible.
-                  falsosPositivos: 0
-                  confirmados: 10
+            examples:
+              individual:
+                summary: Persona física (consulta simple)
+                value:
+                  clientId: 1
+                  userId: 42
+                  entityId: 550e8400-e29b-41d4-a716-446655440000
+                  report:
+                    folio: SE-1772866470970
+                    entidad: Juan Perez Garcia
+                    tipoConsulta: Persona física
+                    fecha: "2026-05-16"
+                    nivelRiesgo: critical
+                    nivelRiesgoNumerico: 3
+                    metadatos:
+                      entityId: 550e8400-e29b-41d4-a716-446655440000
+                      consultaModo: individual
+                      relationshipRole: Accionista
+                      totalListasOriginal: 32
+                    resumen:
+                      totalListas: 32
+                      totalMenciones: 10
+              multipleMember:
+                summary: Screening múltiple — reporte de un miembro
+                value:
+                  clientId: 1
+                  userId: 42
+                  entityId: 660e8400-e29b-41d4-a716-446655440001
+                  parentEntityId: 770e8400-e29b-41d4-a716-446655440099
+                  groupId: GRP-1740000001
+                  groupName: Oceanografia S.A. de C.V.
+                  groupRole: Accionista
+                  report:
+                    folio: SE-GRP-1740000001-01
+                    entidad: Maria Lopez Ruiz
+                    tipoConsulta: Persona física
+                    fecha: "2026-05-16"
+                    metadatos:
+                      entityId: 660e8400-e29b-41d4-a716-446655440001
+                      parentEntityId: 770e8400-e29b-41d4-a716-446655440099
+                      groupId: GRP-1740000001
+                      groupName: Oceanografia S.A. de C.V.
+                      groupRole: Accionista
+                      relationshipRole: Accionista
+                      consultaModo: multiple
+                  searchContext:
+                    consultaModo: multiple
+                    groupId: GRP-1740000001
+                    groupName: Oceanografia S.A. de C.V.
+                    parentEntityId: 770e8400-e29b-41d4-a716-446655440099
+                    partyType: individual
+              multipleWithoutParent:
+                summary: Screening múltiple — sin empresa padre (solo groupName)
+                value:
+                  clientId: 1
+                  userId: 42
+                  entityId: 880e8400-e29b-41d4-a716-446655440002
+                  groupId: GRP-1740000002
+                  groupName: Caso Rodriguez
+                  groupRole: Consejero
+                  report:
+                    folio: SE-GRP-1740000002-01
+                    entidad: Carlos Rodriguez
+                    tipoConsulta: Persona física
+                    metadatos:
+                      consultaModo: multiple
+                      groupId: GRP-1740000002
+                      groupName: Caso Rodriguez
+                      groupRole: Consejero
       responses:
         "201":
           description: Creado
@@ -824,7 +1291,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/ActorContext"
         - type: object
-          required: [name, riskLevel, visibility]
+          required: [name, riskLevel, visibility, sourceCategoryId]
           properties:
             name:
               type: string
@@ -836,6 +1303,14 @@ components:
             visibility:
               type: string
               enum: [public, private]
+            sourceCategoryId:
+              type: integer
+              format: int64
+              example: 1
+              description: |
+                **Obligatorio al crear.** FK a `source_categories.id` (columna BD: `source_category_id`).
+                Debe existir y estar activa (`is_active=true`). Obtén ids válidos con `POST /v1/source-category-id/list` o `meta.categories` en `POST /v1/sources/list`.
+                Errores: `INVALID_SOURCE_CATEGORY`, `INACTIVE_SOURCE_CATEGORY`.
             metadata:
               type: object
               additionalProperties: true
@@ -855,6 +1330,14 @@ components:
               type: integer
               minimum: 0
               default: 0
+            includeCategory:
+              type: boolean
+              default: false
+              description: Si true, incluye `category` cuando el backend es PostgreSQL directo.
+            includeInactiveCategories:
+              type: boolean
+              default: false
+              description: Igual que el query param homónimo. Solo **super_admin**; amplía `meta.categories` con categorías inactivas.
 
     GetSourceRequest:
       allOf:
@@ -865,6 +1348,9 @@ components:
             sourceId:
               type: integer
               format: int64
+            includeCategory:
+              type: boolean
+              default: false
 
     UpdateSourceRequest:
       allOf:
@@ -884,6 +1370,12 @@ components:
             visibility:
               type: string
               enum: [public, private]
+            sourceCategoryId:
+              type: integer
+              format: int64
+              nullable: true
+              description: |
+                Si se omite, no cambia la categoría. Entero válido (activa) o `null` para quitar la FK.
             metadata:
               type: object
               additionalProperties: true
@@ -898,6 +1390,21 @@ components:
               type: integer
               format: int64
 
+    SourceCategoryNested:
+      type: object
+      required: [id, slug, nameEs]
+      properties:
+        id:
+          type: integer
+          format: int64
+        slug:
+          type: string
+        nameEs:
+          type: string
+        nameEn:
+          type: string
+          nullable: true
+
     SourceResponse:
       type: object
       required:
@@ -909,6 +1416,7 @@ components:
         - createdByUserId
         - createdAt
         - updatedAt
+        - sourceCategoryId
       properties:
         sourceId:
           type: integer
@@ -927,6 +1435,13 @@ components:
         createdByUserId:
           type: integer
           format: int32
+        sourceCategoryId:
+          type: integer
+          format: int64
+          nullable: true
+        category:
+          $ref: "#/components/schemas/SourceCategoryNested"
+          description: Presente solo si `includeCategory=true` y hay FK (modo PostgreSQL directo).
         metadata:
           type: object
           additionalProperties: true
@@ -937,10 +1452,116 @@ components:
           type: string
           format: date-time
 
+    SourceCategoryResponse:
+      type: object
+      required: [id, slug, nameEs, isActive, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        slug:
+          type: string
+        nameEs:
+          type: string
+        nameEn:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateSourceCategoryRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [slug, nameEs]
+          properties:
+            slug:
+              type: string
+              pattern: '^[a-z][a-z0-9_]{0,62}$'
+              example: customs
+            nameEs:
+              type: string
+              minLength: 1
+            nameEn:
+              type: string
+              nullable: true
+            isActive:
+              type: boolean
+              default: true
+
+    ListSourceCategoriesRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          properties:
+            isActive:
+              type: boolean
+              nullable: true
+              description: Si no se envía, lista activas e inactivas.
+            limit:
+              type: integer
+              minimum: 1
+              maximum: 200
+              default: 50
+            offset:
+              type: integer
+              minimum: 0
+              default: 0
+
+    ListSourceCategoriesResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceCategoryResponse"
+        total:
+          type: integer
+          format: int32
+          description: Disponible con PostgreSQL directo; puede omitirse con PostgREST.
+
+    SourceCategoryMetaItem:
+      type: object
+      required: [id, slug, nameEs, isActive]
+      properties:
+        id:
+          type: integer
+          format: int64
+        slug:
+          type: string
+        nameEs:
+          type: string
+        nameEn:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+
+    ListSourcesMeta:
+      type: object
+      required: [categories]
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceCategoryMetaItem"
+          description: |
+            Catálogo para dropdowns (una query por petición). Por defecto solo activas. Sin filas en BD → `[]`.
+
     ListSourcesResponse:
       type: object
-      required: [clientId, items]
+      required: [success, clientId, items, meta]
       properties:
+        success:
+          type: boolean
+          example: true
         clientId:
           type: integer
           format: int32
@@ -954,6 +1575,13 @@ components:
           description: |
             Con backend **PostgreSQL directo**: total de filas que cumplen el filtro (públicas o del tenant).
             Con **PostgREST** puede omitirse en la respuesta.
+        nextOffset:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Presente cuando `total` es conocido y quedan más filas (`offset + limit < total`).
+        meta:
+          $ref: "#/components/schemas/ListSourcesMeta"
 
     ChunkItem:
       type: object
@@ -1230,6 +1858,9 @@ components:
         metadatos:
           type: object
           additionalProperties: true
+          description: |
+            Incluye totales de listas y, para screening múltiple, `groupId`, `groupName`, `groupRole`,
+            `parentEntityId`, `entityId`, `relationshipRole`, `consultaModo` (individual|organization|multiple).
         resumen:
           type: object
           additionalProperties: true
@@ -1277,11 +1908,38 @@ components:
           description: |
             El documento editorial va en `report` (recomendado) o en `reporte` (alias legado).
             Si envías ambos, prevalece `report`. Debe incluir `folio` y el JSON completo que persistirá en `report_json`.
+            `entityId` vincula el reporte a una fila de `entities` (misma compañía `clientId`).
           properties:
             clientId:
               type: integer
             userId:
               type: integer
+            entityId:
+              type: string
+              format: uuid
+              description: Entidad de negocio (PF/PM) asociada a esta consulta
+            parentEntityId:
+              type: string
+              format: uuid
+              description: PM padre cuando el screening es múltiple con "Asociar a una empresa"
+            groupId:
+              type: string
+              description: Identificador del batch grupal (ej. GRP-1740000000)
+            groupName:
+              type: string
+              description: |
+                Nombre del Grupo. Obligatorio en screening múltiple **sin** empresa padre.
+                Con empresa padre el UI no muestra el campo; puede omitirse o repetir la razón social de la PM.
+            groupRole:
+              type: string
+              description: Rol del sujeto en el grupo (valor del dropdown Rol / Relación, o "parent" para la PM)
+            relationshipRole:
+              type: string
+              description: Mismo valor que groupRole para miembros; catálogo PF o PM según partyType del sujeto
+            searchContext:
+              type: object
+              additionalProperties: true
+              description: Contexto de búsqueda (query, rfc, requestId, entityId, groupId, consultaModo, etc.)
             report:
               $ref: "#/components/schemas/ReportEditorialPayload"
             reporte:
@@ -1542,6 +2200,510 @@ components:
             targetUserId:
               type: integer
               format: int64
+
+    PartyType:
+      type: string
+      enum: [individual, organization]
+      description: Persona física (individual) o moral (organization)
+
+    ConsultaModo:
+      type: string
+      enum: [individual, organization, multiple]
+      description: Modo del formulario de consulta (Paso 1)
+
+    EntityCategory:
+      type: string
+      enum:
+        - screening
+        - background_check
+        - employee
+        - director
+        - vendor
+        - client
+        - associate
+        - pep
+        - representative
+        - beneficial_owner
+
+    MonitoringFrequency:
+      type: string
+      enum: [weekly, monthly, semi-annual, annual]
+
+    MonitoringSource:
+      type: string
+      enum: [compliance, media]
+      description: compliance = sanciones/PEPs/regulatorio; media = medios adversos
+
+    PartyTypeLabel:
+      type: string
+      enum: ["Persona física", "Persona moral"]
+
+    RelationshipRolePf:
+      type: string
+      enum:
+        - Accionista
+        - Apoderado
+        - "Rep. Legal"
+        - Consejero
+        - Beneficiario Final
+        - Comisario
+        - Otro
+
+    RelationshipRolePm:
+      type: string
+      enum:
+        - Cliente
+        - Proveedor
+        - Contraparte
+        - Subsidiaria
+        - Matriz
+        - Otro
+
+    EntityMatchRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [partyType, partyTypeLabel]
+          properties:
+            partyType:
+              $ref: "#/components/schemas/PartyType"
+            partyTypeLabel:
+              $ref: "#/components/schemas/PartyTypeLabel"
+            legalName:
+              type: string
+              description: Persona moral — razón social / denominación
+            fullName:
+              type: string
+              description: Screening múltiple — nombre completo (PF o PM según partyType)
+            firstName:
+              type: string
+              description: Persona física — nombre(s)
+            lastName:
+              type: string
+              description: Persona física — apellido(s)
+            rfc:
+              type: string
+            curp:
+              type: string
+            minConfidence:
+              type: integer
+              minimum: 0
+              maximum: 100
+              default: 60
+      description: |
+        Persona moral: legalName o fullName y/o rfc. Persona física: firstName+lastName o fullName y/o rfc/curp.
+        Solo entidades con screening en los últimos 30 días.
+
+    EntityMatchCandidate:
+      type: object
+      required: [entityId, name, partyType, matchType, confidence, matchDetails]
+      properties:
+        entityId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        partyType:
+          $ref: "#/components/schemas/PartyType"
+        rfc:
+          type: string
+          nullable: true
+        curp:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+        riskLevel:
+          type: string
+          nullable: true
+        lastScreeningAt:
+          type: string
+          format: date-time
+          nullable: true
+        reportCount:
+          type: integer
+        matchType:
+          type: string
+          enum: [exact_identifier, exact_name, fuzzy_name, word_overlap]
+        confidence:
+          type: integer
+          minimum: 0
+          maximum: 100
+        matchDetails:
+          type: string
+
+    EntityMatchResponse:
+      type: object
+      required: [matches, hasStrongMatch]
+      properties:
+        matches:
+          type: array
+          items:
+            $ref: "#/components/schemas/EntityMatchCandidate"
+        hasStrongMatch:
+          type: boolean
+
+    EntityCreateRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [partyType, partyTypeLabel]
+          properties:
+            partyType:
+              $ref: "#/components/schemas/PartyType"
+            partyTypeLabel:
+              $ref: "#/components/schemas/PartyTypeLabel"
+            legalName:
+              type: string
+            fullName:
+              type: string
+              description: Screening múltiple — nombre completo del sujeto
+            firstName:
+              type: string
+            lastName:
+              type: string
+            relationshipRole:
+              type: string
+              description: Rol / Relación (catálogo según partyType; ver RelationshipRolePf/Pm)
+            parentEntityId:
+              type: string
+              format: uuid
+              description: Entidad PM padre (grupo asociado a empresa)
+            groupId:
+              type: string
+              description: Correlación de batch grupal
+            category:
+              $ref: "#/components/schemas/EntityCategory"
+            rfc:
+              type: string
+            curp:
+              type: string
+            country:
+              type: string
+            metadata:
+              type: object
+              additionalProperties: true
+      description: |
+        RFC y CURP únicos por tenant (409). PM legalName/fullName y/o rfc; PF nombres/fullName y/o identificador.
+
+    EntityCreateResponse:
+      type: object
+      required: [entityId, name, partyType, status, createdAt]
+      properties:
+        entityId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        partyType:
+          $ref: "#/components/schemas/PartyType"
+        category:
+          $ref: "#/components/schemas/EntityCategory"
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    EntitySummary:
+      type: object
+      required: [entityId, name, partyType, partyTypeLabel, category, status]
+      properties:
+        entityId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: Nombre canónico para listados
+        partyType:
+          $ref: "#/components/schemas/PartyType"
+        partyTypeLabel:
+          $ref: "#/components/schemas/PartyTypeLabel"
+        legalName:
+          type: string
+          nullable: true
+        firstName:
+          type: string
+          nullable: true
+        lastName:
+          type: string
+          nullable: true
+        category:
+          $ref: "#/components/schemas/EntityCategory"
+          description: Pestaña de clasificación operativa (screening, employee, …), no PF/PM
+        rfc:
+          type: string
+          nullable: true
+        curp:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+        riskLevel:
+          type: string
+          nullable: true
+        status:
+          type: string
+        reportCount:
+          type: integer
+        lastScreeningAt:
+          type: string
+          format: date-time
+          nullable: true
+        relationshipRole:
+          type: string
+          nullable: true
+        parentEntityId:
+          type: string
+          format: uuid
+          nullable: true
+        fullName:
+          type: string
+          nullable: true
+        monitoring:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            frequency:
+              $ref: "#/components/schemas/MonitoringFrequency"
+            sources:
+              type: array
+              items:
+                $ref: "#/components/schemas/MonitoringSource"
+            nextRunAt:
+              type: string
+              format: date-time
+              nullable: true
+
+    EntityListRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          properties:
+            search:
+              type: string
+              description: Nombre, RFC, CURP o UUID parcial
+            partyType:
+              $ref: "#/components/schemas/PartyType"
+            category:
+              $ref: "#/components/schemas/EntityCategory"
+            riskLevel:
+              type: string
+            status:
+              type: string
+            limit:
+              type: integer
+              minimum: 1
+              maximum: 200
+              default: 50
+            offset:
+              type: integer
+              minimum: 0
+              default: 0
+
+    EntityListResponse:
+      type: object
+      required: [entities, total, limit, offset]
+      properties:
+        entities:
+          type: array
+          items:
+            $ref: "#/components/schemas/EntitySummary"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    EntityGetRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [entityId]
+          properties:
+            entityId:
+              type: string
+              format: uuid
+            includeReports:
+              type: boolean
+              default: true
+
+    EntityGetResponse:
+      type: object
+      required: [entity]
+      properties:
+        entity:
+          $ref: "#/components/schemas/EntitySummary"
+        reports:
+          type: array
+          items:
+            type: object
+            properties:
+              folio:
+                type: string
+              fecha:
+                type: string
+              nivelRiesgo:
+                type: string
+              createdAt:
+                type: string
+                format: date-time
+
+    EntityUpdateRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [entityId]
+          properties:
+            entityId:
+              type: string
+              format: uuid
+            name:
+              type: string
+            partyType:
+              $ref: "#/components/schemas/PartyType"
+            category:
+              $ref: "#/components/schemas/EntityCategory"
+            rfc:
+              type: string
+            curp:
+              type: string
+            country:
+              type: string
+            riskLevel:
+              type: string
+            status:
+              type: string
+            metadata:
+              type: object
+              additionalProperties: true
+
+    EntityDeleteRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [entityId]
+          properties:
+            entityId:
+              type: string
+              format: uuid
+
+    EntityStatsResponse:
+      type: object
+      required:
+        - totalEntities
+        - inReviewCount
+        - individualsCount
+        - individualsHighRisk
+        - organizationsCount
+        - organizationsHighRisk
+        - highRiskTotal
+        - highRiskPercent
+      properties:
+        totalEntities:
+          type: integer
+        inReviewCount:
+          type: integer
+        individualsCount:
+          type: integer
+        individualsHighRisk:
+          type: integer
+        organizationsCount:
+          type: integer
+        organizationsHighRisk:
+          type: integer
+        highRiskTotal:
+          type: integer
+        highRiskPercent:
+          type: number
+          format: float
+
+    EntityMonitoringUpsertRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [entityId, enabled]
+          properties:
+            entityId:
+              type: string
+              format: uuid
+            enabled:
+              type: boolean
+            frequency:
+              $ref: "#/components/schemas/MonitoringFrequency"
+            sources:
+              type: array
+              items:
+                $ref: "#/components/schemas/MonitoringSource"
+
+    EntityMonitoringResponse:
+      type: object
+      required: [entityId, enabled]
+      properties:
+        monitoringId:
+          type: string
+          format: uuid
+        entityId:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+        frequency:
+          $ref: "#/components/schemas/MonitoringFrequency"
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/MonitoringSource"
+        nextRunAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    EntityMonitoringListRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          properties:
+            activeOnly:
+              type: boolean
+              default: true
+            limit:
+              type: integer
+              default: 100
+            offset:
+              type: integer
+              default: 0
+
+    EntityMonitoringListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/EntitySummary"
+              - type: object
+                properties:
+                  monitoringId:
+                    type: string
+                    format: uuid
+                  frequency:
+                    $ref: "#/components/schemas/MonitoringFrequency"
+                  sources:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MonitoringSource"
+                  nextRunAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+        total:
+          type: integer
 
     ErrorBody:
       type: object
