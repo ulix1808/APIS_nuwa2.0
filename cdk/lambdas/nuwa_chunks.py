@@ -11,6 +11,7 @@ from nuwa_obs_log import log_phase
 from nuwa_pg_dispatch import can_mutate_source_row, ingest_chunks_pg
 from nuwa_sources import fetch_source_row_rest
 from nuwa_supabase import rest_json
+from source_risk_level import RISK_LEVEL_API_MESSAGE, is_valid_source_risk_level
 
 
 def ingest_chunks(
@@ -71,8 +72,8 @@ def _ingest_chunks_rest(
     eff_rl = int(risk_level) if risk_level is not None else int(row0["risk_level"])
     eff_vis = visibility if visibility is not None else str(row0["visibility"])
     eff_et = (entity_type or "").strip() or "entity"
-    if eff_rl not in (1, 2, 3):
-        raise SupabaseRestError(400, "risk_level inválido.")
+    if not is_valid_source_risk_level(eff_rl):
+        raise SupabaseRestError(400, RISK_LEVEL_API_MESSAGE)
     if eff_vis not in ("public", "private"):
         raise SupabaseRestError(400, "visibility inválida.")
 

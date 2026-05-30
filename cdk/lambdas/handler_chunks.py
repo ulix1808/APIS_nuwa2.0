@@ -13,6 +13,7 @@ from nuwa_config import DatabaseConfigError, SupabaseConfigError, ensure_data_ba
 from nuwa_errors import SupabaseRestError
 from nuwa_http import json_response
 from nuwa_obs_log import log_handler_enter, log_phase
+from source_risk_level import RISK_LEVEL_API_MESSAGE, parse_source_risk_level
 
 
 def _response(status: int, body: dict[str, Any]) -> dict[str, Any]:
@@ -104,12 +105,9 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     rl_raw = body.get("riskLevel")
     if rl_raw is not None:
-        try:
-            risk_level = int(rl_raw)
-        except (TypeError, ValueError):
-            return _response(400, {"code": "BAD_REQUEST", "message": "riskLevel debe ser 1, 2 o 3."})
-        if risk_level not in (1, 2, 3):
-            return _response(400, {"code": "BAD_REQUEST", "message": "riskLevel debe ser 1, 2 o 3."})
+        risk_level = parse_source_risk_level(rl_raw)
+        if risk_level is None:
+            return _response(400, {"code": "BAD_REQUEST", "message": RISK_LEVEL_API_MESSAGE})
     else:
         risk_level = None
 

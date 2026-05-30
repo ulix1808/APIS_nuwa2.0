@@ -29,6 +29,7 @@ from nuwa_sources import (
     update_source,
 )
 from nuwa_supabase import fetch_user_with_role
+from source_risk_level import RISK_LEVEL_API_MESSAGE, parse_source_risk_level
 
 
 def _response(status: int, body: dict[str, Any]) -> dict[str, Any]:
@@ -70,16 +71,6 @@ def _parse_actor_ids(body: dict[str, Any]) -> tuple[int, int] | None:
         return cid, uid
     except (KeyError, TypeError, ValueError):
         return None
-
-
-def _validate_risk_level(v: Any) -> int | None:
-    try:
-        x = int(v)
-        if x in (1, 2, 3):
-            return x
-    except (TypeError, ValueError):
-        pass
-    return None
 
 
 def _validate_visibility(v: Any) -> str | None:
@@ -264,9 +255,9 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             name = name.strip() if isinstance(name, str) else None
             rl = None
             if "riskLevel" in body:
-                rl = _validate_risk_level(body.get("riskLevel"))
+                rl = parse_source_risk_level(body.get("riskLevel"))
                 if rl is None:
-                    return _bad("riskLevel debe ser 1, 2 o 3.")
+                    return _bad(RISK_LEVEL_API_MESSAGE)
             vis = None
             if "visibility" in body:
                 vis = _validate_visibility(body.get("visibility"))
@@ -385,9 +376,9 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             name = body.get("name")
             if not isinstance(name, str) or not name.strip():
                 return _bad("name requerido (string no vacío).")
-            rl = _validate_risk_level(body.get("riskLevel"))
+            rl = parse_source_risk_level(body.get("riskLevel"))
             if rl is None:
-                return _bad("riskLevel requerido: 1, 2 o 3.")
+                return _bad(f"riskLevel requerido: {RISK_LEVEL_API_MESSAGE}")
             vis = _validate_visibility(body.get("visibility"))
             if vis is None:
                 return _bad("visibility requerido: public o private.")

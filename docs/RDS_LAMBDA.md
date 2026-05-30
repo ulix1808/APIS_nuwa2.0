@@ -29,9 +29,26 @@ psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260406140000_companies_apigw_ke
 psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260406150000_companies_apigw_key_secret.sql
 psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260406160000_nuwa_user_nuwa_space.sql
 psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260516120000_entities_monitoring.sql
+psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260530120000_source_risk_level_0_3.sql
 ```
 
 O ejecuta todas en orden: `./scripts/apply_migrations.sh` (requiere `PGPASSWORD` o `~/.pgpass`).
+
+### Túnel desde tu Mac (bastion + llave)
+
+RDS suele estar cerrado a Internet; el bastion **Nuwa_OptimusPrime** (`ec2-user@3.92.3.96`) y la llave **`Goleto_pairKey.pem`** (típicamente en `~/Downloads/`) permiten un túnel local:
+
+```bash
+chmod +x scripts/rds_tunnel.sh
+export PGPASSWORD='...'
+./scripts/rds_tunnel.sh start
+PGHOST=127.0.0.1 PGPORT=15432 ./scripts/apply_migrations.sh
+./scripts/rds_tunnel.sh stop
+```
+
+Variable opcional: `NUWA_SSH_KEY=~/Downloads/Goleto_pairKey.pem`.
+
+Si el túnel hace timeout, el security group de RDS (`nuwa2.0`) debe permitir **5432** desde la IP pública del bastion (temporal o fija).
 
 4. El usuario **`postgres`** en RDS tiene privilegios suficientes para saltarse RLS en la práctica; si usas otro rol, dale **`BYPASSRLS`** o define políticas (las migraciones activan RLS sin políticas en el repo).
 

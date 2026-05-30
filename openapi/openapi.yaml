@@ -23,7 +23,7 @@ info:
     Reglas de negocio resumidas:
     - **Admin Nuwa** (`clientId=1`, `userId=1`): fuentes siempre **públicas**.
     - **Usuarios empresa** (`clientId≠1`): fuente **private** (solo su tenant) o **public** (todos).
-    - `riskLevel`: **1** = low, **2** = medium, **3** = high.
+    - `riskLevel`: **0** = bajo, **1** = medio, **2** = alto, **3** = crítico (misma escala que el admin UI).
   version: 1.0.0
   contact:
     name: Nuwa
@@ -1299,7 +1299,8 @@ components:
               example: SAT
             riskLevel:
               type: integer
-              enum: [1, 2, 3]
+              enum: [0, 1, 2, 3]
+              description: "0=bajo, 1=medio, 2=alto, 3=crítico"
             visibility:
               type: string
               enum: [public, private]
@@ -1366,7 +1367,8 @@ components:
               minLength: 1
             riskLevel:
               type: integer
-              enum: [1, 2, 3]
+              enum: [0, 1, 2, 3]
+              description: "0=bajo, 1=medio, 2=alto, 3=crítico"
             visibility:
               type: string
               enum: [public, private]
@@ -1425,7 +1427,8 @@ components:
           type: string
         riskLevel:
           type: integer
-          enum: [1, 2, 3]
+          enum: [0, 1, 2, 3]
+          description: "0=bajo, 1=medio, 2=alto, 3=crítico"
         visibility:
           type: string
           enum: [public, private]
@@ -1606,7 +1609,8 @@ components:
               format: int64
             riskLevel:
               type: integer
-              enum: [1, 2, 3]
+              enum: [0, 1, 2, 3]
+              description: "0=bajo, 1=medio, 2=alto, 3=crítico"
               description: |
                 Opcional. Si se omite, se usa `risk_level` de la fuente (`sources`).
             visibility:
@@ -1670,7 +1674,8 @@ components:
               type: array
               items:
                 type: integer
-                enum: [1, 2, 3]
+                enum: [0, 1, 2, 3]
+              description: "0=bajo, 1=medio, 2=alto, 3=crítico"
             limit:
               type: integer
               minimum: 1
@@ -1704,8 +1709,8 @@ components:
           description: Desde catálogo `sources.name`
         riskLevel:
           type: integer
-          enum: [1, 2, 3]
-          description: Típicamente del chunk; alinear con catálogo en Lambda si aplica
+          enum: [0, 1, 2, 3]
+          description: "0=bajo, 1=medio, 2=alto, 3=crítico. Típicamente del chunk; alinear con catálogo en Lambda si aplica."
         entityType:
           type: string
         score:

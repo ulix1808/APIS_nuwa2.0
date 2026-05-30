@@ -126,7 +126,7 @@ Catálogo de fuentes. Visible por API `/v1/sources/*`.
 |---------|------|--------|
 | `id` | bigserial | PK. |
 | `name` | text | |
-| `risk_level` | smallint | **CHECK** entre 1 y 3. |
+| `risk_level` | smallint | **CHECK** entre 0 y 3 (0=bajo, 1=medio, 2=alto, 3=crítico). |
 | `visibility` | text | **`public`** \| **`private`**. |
 | `client_id` | integer | Tenant dueño / contexto. |
 | `created_by_user_id` | integer | Usuario que creó la fila. |
@@ -163,7 +163,7 @@ Una fila = un trozo de texto indexable asociado a una fuente. **No** existe colu
 |---------|------|--------|
 | `id` | uuid | PK, default `gen_random_uuid()`. |
 | `client_id` | integer | Alineado con la fuente en ingest. |
-| `risk_level` | smallint | **CHECK** 1–3. |
+| `risk_level` | smallint | **CHECK** 0–3 (misma escala que `sources`). |
 | `source_id` | bigint | FK → `sources(id)` **ON DELETE CASCADE** (al borrar fuente se borran chunks). |
 | `entity_type` | text | P. ej. `company`; default lógico en API `entity`. |
 | `chunk_text` | text | Texto indexado (a menudo JSON serializado de una fila SAT). |

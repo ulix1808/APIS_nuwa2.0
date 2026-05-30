@@ -14,7 +14,7 @@ Cada fila en `risk_entity_chunks` representa **un trozo indexable** de una fuent
 |-----------------|-----|
 | `source_id`     | `bigint`: id numérico del catálogo de fuentes (mismo que al borrar la fuente). |
 | `client_id`     | Tenant. |
-| `risk_level`    | `1` = low, `2` = medium, `3` = high (homologado con otras APIs). |
+| `risk_level`    | `0` = bajo, `1` = medio, `2` = alto, `3` = crítico (homologado con catálogo y admin UI). |
 | `entity_type`   | P. ej. `company`, `person` (según negocio / extracción). |
 | `chunk_text`    | **Texto plano buscable** (ver reglas abajo). |
 | `visibility`    | `public` \| `private` según si la fuente es visible para todos los tenants o solo el creador. |

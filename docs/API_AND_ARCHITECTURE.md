@@ -242,7 +242,7 @@ Las secciones siguientes añaden el payload específico **junto a** estos campos
 
 ## 9. API de catálogo de fuentes (`sources`)
 
-**`riskLevel`:** entero **1** = low, **2** = medium, **3** = high.
+**`riskLevel`:** entero **0** = bajo, **1** = medio, **2** = alto, **3** = crítico.
 
 ### 9.1 Crear fuente
 
@@ -368,7 +368,7 @@ El Lambda traduce este JSON a la función `search_risk_entities` (PostgREST `rpc
   "query": "evcom group",
   "rfc": "ABC123456789",
   "entityTypes": ["company", "person"],
-  "riskLevels": [1, 2, 3],
+  "riskLevels": [0, 1, 2, 3],
   "limit": 20,
   "wordSimilarityThreshold": 0.38
 }

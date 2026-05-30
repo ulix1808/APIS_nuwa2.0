@@ -18,6 +18,7 @@ from psycopg.types.json import Json
 from nuwa_config import get_database_config
 from nuwa_errors import SupabaseRestError
 from nuwa_obs_log import log_await, log_done, log_phase
+from source_risk_level import RISK_LEVEL_API_MESSAGE, is_valid_source_risk_level
 
 
 def _parse_query(qs: str | None) -> dict[str, str]:
@@ -783,8 +784,8 @@ def ingest_chunks_pg(
     eff_rl = int(risk_level) if risk_level is not None else int(row0["risk_level"])
     eff_vis = visibility if visibility is not None else str(row0["visibility"])
     eff_et = (entity_type or "").strip() or "entity"
-    if eff_rl not in (1, 2, 3):
-        raise SupabaseRestError(400, "risk_level inválido.")
+    if not is_valid_source_risk_level(eff_rl):
+        raise SupabaseRestError(400, RISK_LEVEL_API_MESSAGE)
     if eff_vis not in ("public", "private"):
         raise SupabaseRestError(400, "visibility inválida.")
 

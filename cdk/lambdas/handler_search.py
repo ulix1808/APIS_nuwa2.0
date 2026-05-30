@@ -12,6 +12,7 @@ from nuwa_http import json_response
 from nuwa_api_auth import jwt_allows_client, require_jwt
 from nuwa_supabase import invoke_search_risk_entities
 from nuwa_obs_log import log_handler_enter, log_phase
+from source_risk_level import validate_source_risk_levels_list
 
 
 def _response(status: int, body: dict[str, Any]) -> dict[str, Any]:
@@ -88,6 +89,9 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             risk_levels = [int(x) for x in risk_levels]
         except (TypeError, ValueError):
             return _response(400, {"code": "BAD_REQUEST", "message": "riskLevels: enteros."})
+        rl_err = validate_source_risk_levels_list(risk_levels)
+        if rl_err:
+            return _response(400, {"code": "BAD_REQUEST", "message": rl_err})
 
     try:
         lim = int(body.get("limit", 20))
