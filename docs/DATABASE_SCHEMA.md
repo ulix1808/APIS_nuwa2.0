@@ -21,6 +21,9 @@ Referencia de **tablas y columnas** tal como se definen en `supabase/migrations/
 | `entity_monitoring` | Configuración de monitoreo continuo por entidad. |
 | `entity_monitoring_runs` | Log de ejecuciones del scheduler (futuro). |
 | `entity_alerts` | Alertas por cambio de riesgo o nuevos hallazgos (futuro). |
+| `documents` | Metadata de documentos internos del cliente (S3 + extracción). |
+| `document_entity_links` | Vínculo parte/entidad extraída ↔ entidad en `entities`. |
+| `client_storage_profiles` | Prefijo S3 y cuotas por tenant para documentos. |
 
 **Extensiones:** `pg_trgm` (búsqueda difusa sobre `chunk_text`).  
 **RLS:** activado en varias tablas desde migraciones; en RDS con rol `postgres`/service las políticas pueden no limitar al mismo modo que en Supabase — ver notas en migraciones.
@@ -176,6 +179,65 @@ Una fila = un trozo de texto indexable asociado a una fuente. **No** existe colu
 
 ---
 
+## `public.documents`
+
+Metadata de documentos internos; binario en S3 (`s3_key`). Migración `20260531120000_client_documents.sql`.
+
+| Columna | Tipo | Notas |
+|---------|------|--------|
+| `id` | uuid | PK. |
+| `client_id` | integer | Tenant. |
+| `uploaded_by_user_id` | integer | Usuario que subió. |
+| `original_filename` | text | Nombre original. |
+| `mime_type` | text | Validado en presign. |
+| `size_bytes` | bigint | Tamaño en S3. |
+| `s3_key` | text | Ruta en bucket `clients/{clientId}/documents/{id}/…` |
+| `status` | text | `pending` → `uploaded` → `processing` → `ready` / `deleted` |
+| `document_type` | text | Tipo inferido (contrato, acta, etc.). |
+| `document_date` | date | Fecha del documento si se extrajo. |
+| `summary` | text | Resumen Grok. |
+| `extracted_json` | jsonb | JSON completo de extracción + metadatos finalize. |
+| `primary_entity_id` | uuid | FK nullable → `entities`. |
+| `source_id` | bigint | FK nullable → source privada de indexación. |
+| `created_at` / `updated_at` | timestamptz | Trigger `trg_documents_updated_at`. |
+
+---
+
+## `public.document_entity_links`
+
+Vínculo entre un documento y entidades mencionadas/extraídas.
+
+| Columna | Tipo | Notas |
+|---------|------|--------|
+| `id` | uuid | PK. |
+| `client_id` | integer | Tenant. |
+| `document_id` | uuid | FK → `documents`. |
+| `entity_id` | uuid | FK → `entities`. |
+| `role` | text | Rol de la parte en el documento. |
+| `is_primary` | boolean | Parte principal. |
+| `confidence` | numeric | Score del match al finalize. |
+| `mention_source` | text | Default `grok`. |
+| `mention_payload` | jsonb | Payload crudo de la extracción. |
+| `created_at` | timestamptz | |
+
+**UNIQUE** `(document_id, entity_id)`.
+
+---
+
+## `public.client_storage_profiles`
+
+Perfil de almacenamiento S3 por tenant (creado con `POST /v1/clients/storage/init`).
+
+| Columna | Tipo | Notas |
+|---------|------|--------|
+| `id` | uuid | PK. |
+| `client_id` | integer | **UNIQUE** por tenant. |
+| `s3_prefix` | text | Ej. `clients/1/`. |
+| `max_storage_bytes` | bigint | Cuota opcional. |
+| `created_at` / `updated_at` | timestamptz | |
+
+---
+
 ## Funciones SQL relacionadas
 
 - **`public.search_risk_entities(...)`** — definida en `20260405120000_risk_entities_search.sql`; búsqueda difusa / filtros sobre chunks visibles para el tenant.
@@ -186,4 +248,4 @@ Una fila = un trozo de texto indexable asociado a una fuente. **No** existe colu
 
 Este archivo resume el estado **después de aplicar todas las migraciones** en orden. Si añades migraciones nuevas, actualiza esta referencia o enlázalas aquí.
 
-**Ver también:** `docs/RDS_LAMBDA.md`, `docs/API_AND_ARCHITECTURE.md`, `openapi/openapi.yaml`, `docs/INGEST_CHUNKING.md`.
+**Ver también:** `docs/BACKEND_FEATURES.md`, `docs/RDS_LAMBDA.md`, `docs/API_AND_ARCHITECTURE.md`, `openapi/openapi.yaml`, `docs/INGEST_CHUNKING.md`, `docs/DOCUMENTS_MODULE.md`.

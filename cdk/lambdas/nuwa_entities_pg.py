@@ -279,6 +279,8 @@ def entities_list_pg(body: dict[str, Any]) -> dict[str, Any]:
     if body.get("parentEntityId"):
         where.append("e.parent_entity_id = %s::uuid")
         params.append(body["parentEntityId"])
+    if not body.get("includeDocumentMentions"):
+        where.append("e.category <> 'document_mention'")
     search = (body.get("search") or "").strip()
     if search:
         where.append(
@@ -638,4 +640,11 @@ def touch_entity_after_report_pg(
                     "UPDATE public.entities SET risk_level = %s WHERE id = %s::uuid",
                     [merged, entity_id],
                 )
+        conn.execute(
+            """
+            UPDATE public.entities SET category = 'screening', updated_at = now()
+            WHERE id = %s::uuid AND client_id = %s AND category = 'document_mention' AND status <> 'deleted'
+            """,
+            [entity_id, client_id],
+        )
         conn.commit()

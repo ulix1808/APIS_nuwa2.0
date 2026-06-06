@@ -92,10 +92,47 @@ class NuwaApiStack(Stack):
         # Dependencias Linux x86_64 (psycopg) en lambdas/ — ver scripts/bundle_lambda_deps.sh
         lambda_code = lambda_.Code.from_asset(lambdas_path)
 
+        client_documents_bucket = s3.Bucket(
+            self,
+            "NuwaClientDocumentsBucket",
+            bucket_name=f"{prefix}-client-documents",
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            versioned=False,
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    id="abort-incomplete-uploads",
+                    abort_incomplete_multipart_upload_after=Duration.days(7),
+                ),
+            ],
+            cors=[
+                s3.CorsRule(
+                    allowed_methods=[
+                        s3.HttpMethods.PUT,
+                        s3.HttpMethods.POST,
+                        s3.HttpMethods.HEAD,
+                        s3.HttpMethods.GET,
+                    ],
+                    allowed_origins=[
+                        "https://app.nuwa.space",
+                        "http://app.nuwa.space",
+                        "http://localhost:3000",
+                        "http://localhost:3001",
+                    ],
+                    allowed_headers=["*"],
+                    exposed_headers=["ETag"],
+                    max_age=3600,
+                )
+            ],
+            removal_policy=RemovalPolicy.RETAIN,
+            auto_delete_objects=False,
+        )
+
         lambda_env: dict[str, str] = {
             "SUPABASE_URL_PARAMETER": url_param.parameter_name,
             "SUPABASE_SECRET_ARN": secret.secret_arn,
             "NUWA_ENV": env,
+            "NUWA_DOCUMENTS_BUCKET": client_documents_bucket.bucket_name,
         }
         if use_database:
             lambda_env["NUWA_DATABASE_SECRET_ARN"] = db_secret.secret_arn
@@ -256,6 +293,13 @@ class NuwaApiStack(Stack):
             handler="handler_entities.handler",
             **lambda_kwargs,
         )
+        documents_fn = lambda_.Function(
+            self,
+            "DocumentsLambda",
+            function_name=f"{prefix}-lambda-documents",
+            handler="handler_documents.handler",
+            **lambda_kwargs,
+        )
         admin_fn = lambda_.Function(
             self,
             "AdminLambda",
@@ -271,7 +315,7 @@ class NuwaApiStack(Stack):
             **lambda_kwargs,
         )
 
-        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
             url_param.grant_read(fn)
             secret.grant_read(fn)
             db_secret.grant_read(fn)
@@ -316,7 +360,7 @@ class NuwaApiStack(Stack):
                 "StringLike": {"secretsmanager:SecretId": app_crypto_secret_id_patterns}
             },
         )
-        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
             fn.add_to_role_policy(app_crypto_iam_fix)
 
         # ARN explícito + comodín de sufijo (Secrets Manager añade 6 chars). grant_read / StringLike a veces
@@ -339,7 +383,7 @@ class NuwaApiStack(Stack):
                 _app_crypto_arn_wildcard,
             ],
         )
-        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
             fn.add_to_role_policy(app_crypto_resource_allow)
 
         api = apigw.RestApi(
@@ -428,11 +472,15 @@ class NuwaApiStack(Stack):
             retain_on_delete=True,
         )
 
+        client_documents_bucket.grant_read_write(documents_fn)
+        client_documents_bucket.grant_read_write(admin_fn)
+
         sources_integration = apigw.LambdaIntegration(sources_fn)
         chunks_integration = apigw.LambdaIntegration(chunks_fn)
         search_integration = apigw.LambdaIntegration(search_fn)
         reports_integration = apigw.LambdaIntegration(reports_fn)
         entities_integration = apigw.LambdaIntegration(entities_fn)
+        documents_integration = apigw.LambdaIntegration(documents_fn)
         admin_integration = apigw.LambdaIntegration(admin_fn)
         auth_integration = apigw.LambdaIntegration(auth_fn)
 
@@ -469,6 +517,21 @@ class NuwaApiStack(Stack):
         emon = entities.add_resource("monitoring")
         emon.add_resource("upsert").add_method("POST", entities_integration, api_key_required=False)
         emon.add_resource("list").add_method("POST", entities_integration, api_key_required=False)
+
+        clients = v1.add_resource("clients")
+        clients.add_resource("storage").add_resource("init").add_method(
+            "POST", documents_integration, api_key_required=False
+        )
+
+        docs = v1.add_resource("documents")
+        docs.add_resource("presign").add_method("POST", documents_integration, api_key_required=False)
+        docs.add_resource("upload-complete").add_method("POST", documents_integration, api_key_required=False)
+        docs.add_resource("finalize").add_method("POST", documents_integration, api_key_required=False)
+        docs.add_resource("list").add_method("POST", documents_integration, api_key_required=False)
+        docs.add_resource("get").add_method("POST", documents_integration, api_key_required=False)
+        docs.add_resource("update").add_method("POST", documents_integration, api_key_required=False)
+        docs.add_resource("delete").add_method("POST", documents_integration, api_key_required=False)
+        docs.add_resource("download-url").add_method("POST", documents_integration, api_key_required=False)
 
         reports = v1.add_resource("reports")
         reports_get = reports.add_resource("get")
@@ -536,6 +599,8 @@ class NuwaApiStack(Stack):
             chunks_fn,
             search_fn,
             reports_fn,
+            entities_fn,
+            documents_fn,
             admin_fn,
             auth_fn,
             api,
@@ -546,6 +611,7 @@ class NuwaApiStack(Stack):
             db_secret,
             app_crypto_secret,
             docs_bucket,
+            client_documents_bucket,
         ):
             Tags.of(construct).add(TAG_PROJECT, TAG_VALUE_PROJECT)
             Tags.of(construct).add(TAG_ENVIRONMENT, env)
@@ -603,6 +669,19 @@ class NuwaApiStack(Stack):
             "OpenApiDocsWebsiteUrl",
             value=docs_bucket.bucket_website_url,
             description="Sitio estático público con Swagger UI + openapi.yaml (S3 website endpoint, HTTP).",
+        )
+
+        CfnOutput(
+            self,
+            "ClientDocumentsBucketName",
+            value=client_documents_bucket.bucket_name,
+            description="Bucket S3 para documentos internos del cliente (presigned upload/download)",
+        )
+        CfnOutput(
+            self,
+            "ClientDocumentsBucketArn",
+            value=client_documents_bucket.bucket_arn,
+            description="ARN del bucket de documentos del cliente",
         )
 
         # Documentación operativa

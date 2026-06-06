@@ -150,6 +150,15 @@ def companies_create(actor: dict[str, Any], body: dict[str, Any]) -> dict[str, A
     out = rest_json("POST", "companies", body=row)
     item = out[0] if isinstance(out, list) else out
     cid = int(item["client_id"])
+    try:
+        from nuwa_config import is_database_mode
+
+        if is_database_mode() and os.environ.get("NUWA_DOCUMENTS_BUCKET"):
+            from nuwa_documents_pg import storage_init_pg
+
+            storage_init_pg({"clientId": cid, "userId": int(actor["id"])})
+    except Exception:
+        pass
     key_id: str | None = None
     key_value: str | None = None
     try:

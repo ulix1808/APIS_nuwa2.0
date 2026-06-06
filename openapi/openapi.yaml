@@ -54,6 +54,12 @@ tags:
       Entidades de negocio (Persona Física / Persona Moral) por `client_id`. Match pre-consulta (30 días),
       alta con campos estructurados PF/PM, `relationshipRole`, screening múltiple (`fullName`, `parentEntityId`),
       monitoreo continuo. Ver `docs/ENTIDADES_ROLES_Y_GRUPOS.md`.
+  - name: Documents
+    description: |
+      Documentos internos del cliente (PDF/CSV en S3). Presigned upload, finalize con JSON Grok,
+      auto-entidades `document_mention` e indexación en sources/chunks privados.
+  - name: ClientStorage
+    description: Inicialización idempotente del prefijo S3 por `client_id`
   - name: Admin
     description: |
       RBAC con JWT. Requiere `Authorization: Bearer` y body `clientId`/`userId` alineados al token.
@@ -716,6 +722,162 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/ServerError"
+
+  /v1/clients/storage/init:
+    post:
+      tags: [ClientStorage]
+      operationId: clientsStorageInit
+      summary: Inicializar prefijo S3 del tenant
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActorContext"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientStorageInitResponse"
+
+  /v1/documents/presign:
+    post:
+      tags: [Documents]
+      operationId: documentsPresign
+      summary: URL firmada para subir documento a S3
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentPresignRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentPresignResponse"
+
+  /v1/documents/upload-complete:
+    post:
+      tags: [Documents]
+      operationId: documentsUploadComplete
+      summary: Confirmar upload en S3
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentIdRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/documents/finalize:
+    post:
+      tags: [Documents]
+      operationId: documentsFinalize
+      summary: Persistir extracción Grok, entidades y chunks
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentFinalizeRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentFinalizeResponse"
+
+  /v1/documents/list:
+    post:
+      tags: [Documents]
+      operationId: documentsList
+      summary: Listar documentos del tenant
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentListRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/documents/get:
+    post:
+      tags: [Documents]
+      operationId: documentsGet
+      summary: Detalle de documento con entityLinks
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentIdRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/documents/update:
+    post:
+      tags: [Documents]
+      operationId: documentsUpdate
+      summary: Actualizar metadata del documento
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentUpdateRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/documents/delete:
+    post:
+      tags: [Documents]
+      operationId: documentsDelete
+      summary: Soft delete de documento
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentDeleteRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/documents/download-url:
+    post:
+      tags: [Documents]
+      operationId: documentsDownloadUrl
+      summary: URL firmada GET para descargar
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentIdRequest"
+      responses:
+        "200":
+          description: OK
 
   /v1/reports/get:
     get:
@@ -1610,8 +1772,8 @@ components:
             riskLevel:
               type: integer
               enum: [0, 1, 2, 3]
-              description: "0=bajo, 1=medio, 2=alto, 3=crítico"
               description: |
+                0=bajo, 1=medio, 2=alto, 3=crítico.
                 Opcional. Si se omite, se usa `risk_level` de la fuente (`sources`).
             visibility:
               type: string
@@ -2229,6 +2391,7 @@ components:
         - pep
         - representative
         - beneficial_owner
+        - document_mention
 
     MonitoringFrequency:
       type: string
@@ -2508,6 +2671,137 @@ components:
               type: integer
               minimum: 0
               default: 0
+            includeDocumentMentions:
+              type: boolean
+              default: false
+              description: Si false (default), excluye entidades category=document_mention del listado
+
+    ClientStorageInitResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        clientId: { type: integer }
+        s3Prefix: { type: string }
+        initialized: { type: boolean }
+        alreadyExists: { type: boolean }
+
+    DocumentIdRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [documentId]
+          properties:
+            documentId: { type: string, format: uuid }
+
+    DocumentPresignRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [filename, mimeType, fileSizeBytes]
+          properties:
+            filename: { type: string }
+            mimeType: { type: string }
+            fileSizeBytes: { type: integer, format: int64 }
+            fileType: { type: string }
+            category: { type: string }
+            requestId: { type: string, format: uuid }
+
+    DocumentPresignResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        documentId: { type: string, format: uuid }
+        uploadUrl: { type: string }
+        uploadMethod: { type: string, enum: [PUT] }
+        uploadHeaders:
+          type: object
+          additionalProperties: { type: string }
+        s3Bucket: { type: string }
+        s3Key: { type: string }
+        expiresInSeconds: { type: integer }
+
+    ExtractedParty:
+      type: object
+      additionalProperties: true
+      properties:
+        name: { type: string }
+        partyType: { type: string, enum: [individual, organization] }
+        role: { type: string }
+        rfc: { type: string, nullable: true }
+        curp: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        phones: { type: array, items: { type: string } }
+        emails: { type: array, items: { type: string } }
+
+    ExtractedDocumentJson:
+      type: object
+      additionalProperties: true
+      properties:
+        documentType: { type: string }
+        language: { type: string }
+        summary: { type: string }
+        dateIssued: { type: string, format: date }
+        parties:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExtractedParty"
+
+    DocumentFinalizeRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          required: [documentId, extractedJson]
+          properties:
+            documentId: { type: string, format: uuid }
+            primaryEntityId: { type: string, format: uuid, nullable: true }
+            extractedJson:
+              $ref: "#/components/schemas/ExtractedDocumentJson"
+            extractedText: { type: string }
+            autoCreateEntities: { type: boolean, default: true }
+            autoIndex: { type: boolean, default: true }
+
+    DocumentFinalizeResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        documentId: { type: string, format: uuid }
+        status: { type: string }
+        primaryEntityId: { type: string, format: uuid, nullable: true }
+        linksCreated: { type: integer }
+        entitiesCreated: { type: integer }
+        entitiesMatched: { type: integer }
+        sourceId: { type: integer, nullable: true }
+
+    DocumentListRequest:
+      allOf:
+        - $ref: "#/components/schemas/ActorContext"
+        - type: object
+          properties:
+            limit: { type: integer, default: 50 }
+            offset: { type: integer, default: 0 }
+            status: { type: string }
+            fileType: { type: string }
+            primaryEntityId: { type: string, format: uuid }
+            search: { type: string }
+            includeExtractedJson: { type: boolean, default: false }
+
+    DocumentUpdateRequest:
+      allOf:
+        - $ref: "#/components/schemas/DocumentIdRequest"
+        - type: object
+          properties:
+            primaryEntityId: { type: string, format: uuid, nullable: true }
+            fileType: { type: string }
+            category: { type: string }
+            description: { type: string }
+            tags: { type: array, items: { type: string } }
+
+    DocumentDeleteRequest:
+      allOf:
+        - $ref: "#/components/schemas/DocumentIdRequest"
+        - type: object
+          properties:
+            deleteFromS3: { type: boolean, default: false }
 
     EntityListResponse:
       type: object
