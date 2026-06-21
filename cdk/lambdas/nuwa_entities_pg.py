@@ -544,14 +544,75 @@ def entities_delete_pg(body: dict[str, Any]) -> dict[str, Any]:
     UPDATE public.entities SET
       status = 'deleted', deleted_at = now(), deleted_by_user_id = %s, updated_by_user_id = %s
     WHERE id = %s::uuid AND client_id = %s AND status <> 'deleted'
-    RETURNING id
+    RETURNING id, name, legal_name, full_name
     """
     with _conn() as conn:
         row = conn.execute(sql, [user_id, user_id, entity_id, client_id]).fetchone()
+        if not row:
+            raise SupabaseRestError(404, "Entidad no encontrada")
+
+        name_variants: list[str] = []
+        seen_names: set[str] = set()
+        for key in ("name", "legal_name", "full_name"):
+            v = (row.get(key) or "").strip()
+            norm = v.lower()
+            if v and norm not in seen_names:
+                seen_names.add(norm)
+                name_variants.append(v)
+
+        rep_params: list[Any] = [client_id, entity_id, entity_id]
+        rep_where = """
+            client_id = %s AND status = 'active'
+            AND (
+              entity_id = %s::uuid
+              OR parent_entity_id = %s::uuid
+        """
+        if name_variants:
+            placeholders = ", ".join(["LOWER(TRIM(%s))"] * len(name_variants))
+            rep_where += f"""
+              OR (
+                entity_id IS NULL
+                AND LOWER(TRIM(COALESCE(entidad, ''))) IN ({placeholders})
+              )
+            """
+            rep_params.extend(name_variants)
+        rep_where += ")"
+
+        deleted_reports = conn.execute(
+            f"""
+            UPDATE public.reports SET
+              status = 'deleted', updated_at = now()
+            WHERE {rep_where}
+            RETURNING id
+            """,
+            rep_params,
+        ).fetchall()
+
+        conn.execute(
+            """
+            UPDATE public.entity_monitoring SET
+              is_enabled = false, updated_at = now()
+            WHERE entity_id = %s::uuid
+            """,
+            [entity_id],
+        )
+
+        conn.execute(
+            """
+            UPDATE public.documents SET
+              primary_entity_id = NULL, updated_at = now()
+            WHERE client_id = %s AND primary_entity_id = %s::uuid
+            """,
+            [client_id, entity_id],
+        )
+
         conn.commit()
-    if not row:
-        raise SupabaseRestError(404, "Entidad no encontrada")
-    return {"entityId": entity_id, "status": "deleted"}
+
+    return {
+        "entityId": entity_id,
+        "status": "deleted",
+        "reportsDeleted": len(deleted_reports),
+    }
 
 
 def entities_stats_pg(body: dict[str, Any]) -> dict[str, Any]:

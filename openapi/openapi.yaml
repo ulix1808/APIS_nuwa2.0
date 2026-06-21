@@ -617,7 +617,13 @@ paths:
     post:
       tags: [Entities]
       summary: Eliminar entidad (lógico)
-      description: Marca `status=deleted`. Los reportes históricos conservan `entity_id`.
+      description: |
+        Marca `status=deleted` en la entidad y en cascada:
+        - Reportes `active` vinculados por `entity_id`, `parent_entity_id` o nombre huérfano (`entity_id` null y `entidad` igual a name/legal_name/full_name).
+        - Desactiva filas en `entity_monitoring` (`is_enabled=false`).
+        - Quita `primary_entity_id` en `documents` que apuntaban a la entidad.
+        Respuesta incluye `reportsDeleted` (recuento de reportes marcados deleted).
+        `POST /v1/reports/get` con `status=active` excluye reportes ligados a entidades deleted.
       security:
         - BearerAuth: []
       requestBody:
@@ -633,7 +639,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [entityId, status]
+                required: [entityId, status, reportsDeleted]
                 properties:
                   entityId:
                     type: string
@@ -641,6 +647,9 @@ paths:
                   status:
                     type: string
                     enum: [deleted]
+                  reportsDeleted:
+                    type: integer
+                    description: Reportes marcados `status=deleted` en la misma operación.
         "404":
           $ref: "#/components/responses/NotFound"
         "401":
@@ -893,6 +902,9 @@ paths:
       description: |
         Al menos uno de `clientId`, `userId` o `folio`. Opcional: `includePayload=true` (objeto completo con `payload`),
         `nextKey` (paginación), `limit` (1–100, default 20).
+
+        Lista solo reportes `status=active` que **no** estén ligados a entidades con `status=deleted`
+        (por `entity_id`, `parent_entity_id` o nombre huérfano en `entidad`).
 
         **RBAC opcional:** `actorUserId` y `actorClientId` — si se envían, los resultados se filtran según rol en `nuwa_users`.
       security:

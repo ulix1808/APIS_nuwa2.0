@@ -171,6 +171,35 @@ def _reports_get(parts: dict[str, str]) -> list[dict[str, Any]]:
         params.append(int(uid))
         where.append("created_by_user_id = %s")
 
+    if st == "active":
+        where.append(
+            """
+            NOT EXISTS (
+              SELECT 1 FROM public.entities e
+              WHERE e.status = 'deleted'
+                AND (e.id = public.reports.entity_id OR e.id = public.reports.parent_entity_id)
+            )
+            """
+        )
+        where.append(
+            """
+            NOT (
+              public.reports.entity_id IS NULL
+              AND TRIM(COALESCE(public.reports.entidad, '')) <> ''
+              AND EXISTS (
+                SELECT 1 FROM public.entities e
+                WHERE e.client_id = public.reports.client_id
+                  AND e.status = 'deleted'
+                  AND (
+                    LOWER(TRIM(COALESCE(e.name, ''))) = LOWER(TRIM(public.reports.entidad))
+                    OR LOWER(TRIM(COALESCE(e.legal_name, ''))) = LOWER(TRIM(public.reports.entidad))
+                    OR LOWER(TRIM(COALESCE(e.full_name, ''))) = LOWER(TRIM(public.reports.entidad))
+                  )
+              )
+            )
+            """
+        )
+
     order_sql = "ORDER BY created_at DESC"
     ordv = parts.get("order", "")
     if ordv == "created_at.desc":
