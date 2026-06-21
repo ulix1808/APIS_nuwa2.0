@@ -351,8 +351,11 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 include_category=inc_cat,
                 include_document_sources=inc_doc_sources,
             )
-            # Una sola consulta al catálogo global (sin N+1). RBAC: mismas categorías para todos los tenants.
-            cat_rows = list_categories_catalog(active_only=not want_inactive_meta)
+            try:
+                cat_rows = list_categories_catalog(active_only=not want_inactive_meta)
+            except Exception as cat_err:
+                log_phase("sources_list", f"categories_catalog_failed: {cat_err!s}")
+                cat_rows = []
             out: dict[str, Any] = {
                 "success": True,
                 "clientId": cid,

@@ -26,11 +26,22 @@ reuse_database_secret = _reuse_all or _truthy_ctx("reuseDatabaseSecret")
 reuse_supabase_secret = _reuse_all or _truthy_ctx("reuseSupabaseSecret")
 reuse_app_crypto_secret = _reuse_all or _truthy_ctx("reuseAppCryptoSecret")
 
+_lambda_outside_vpc = _truthy_ctx("lambdaOutsideVpc")
 _rds_vpc = str(app.node.try_get_context("rdsVpcId") or "").strip()
 _lambda_subnets = str(app.node.try_get_context("lambdaSubnetIds") or "").strip()
 _rds_sg = str(app.node.try_get_context("rdsSecurityGroupId") or "").strip()
 lambda_vpc_for_rds: dict[str, str] | None = None
-if use_database and (_rds_vpc or _lambda_subnets or _rds_sg):
+rds_public_lambda_access_sg_id: str | None = None
+
+if _lambda_outside_vpc:
+    if use_database:
+        if not _rds_sg:
+            raise ValueError(
+                "Con lambdaOutsideVpc=true y useDatabase=true define rdsSecurityGroupId "
+                "(SG de RDS) para añadir ingress 5432 desde Lambdas sin VPC."
+            )
+        rds_public_lambda_access_sg_id = _rds_sg
+elif use_database and (_rds_vpc or _lambda_subnets or _rds_sg):
     missing = [
         n
         for n, v in (
@@ -70,6 +81,7 @@ NuwaApiStack(
     reuse_supabase_secret=reuse_supabase_secret,
     reuse_app_crypto_secret=reuse_app_crypto_secret,
     lambda_vpc_for_rds=lambda_vpc_for_rds,
+    rds_public_lambda_access_sg_id=rds_public_lambda_access_sg_id,
     env=cdk.Environment(
         account=_cdk_account,
         region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),

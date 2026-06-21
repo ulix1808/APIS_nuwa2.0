@@ -14,11 +14,13 @@ from document_helpers import (
     build_index_chunks,
     document_s3_key,
     document_source_metadata,
+    DOCUMENT_SOURCE_CATEGORY_SLUG,
     DOCUMENT_SOURCE_RISK_LEVEL,
+    is_document_internal_source_metadata,
     max_upload_bytes,
     mime_allowed,
 )
-from entity_helpers import find_matches, has_strong_match, normalize_identifier
+from entity_helpers import find_matches, normalize_identifier
 from nuwa_chunks import ingest_chunks
 from nuwa_errors import SupabaseRestError
 from nuwa_pg_dispatch import _conn
@@ -90,13 +92,65 @@ def _get_doc(client_id: int, document_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def _default_source_category_id(conn) -> int:
+def _document_source_category_id(conn) -> int:
     row = conn.execute(
-        "SELECT id FROM public.source_categories WHERE is_active = true ORDER BY id ASC LIMIT 1"
+        """
+        SELECT id FROM public.source_categories
+        WHERE slug = %s AND is_active = true
+        LIMIT 1
+        """,
+        [DOCUMENT_SOURCE_CATEGORY_SLUG],
     ).fetchone()
+    if not row:
+        row = conn.execute(
+            "SELECT id FROM public.source_categories WHERE is_active = true ORDER BY id ASC LIMIT 1"
+        ).fetchone()
     if not row:
         raise SupabaseRestError(422, "No hay source_categories activas para indexar documentos.")
     return int(row["id"])
+
+
+def _purge_document_search_index(
+    conn,
+    *,
+    source_id: int | None,
+    document_id: str,
+    client_id: int,
+) -> dict[str, int | None]:
+    """Elimina chunks y fuente indexada del documento (si aplica)."""
+    removed_chunks = 0
+    removed_source_id: int | None = None
+    if source_id is None:
+        return {"removedChunks": removed_chunks, "removedSourceId": removed_source_id}
+
+    src = conn.execute(
+        """
+        SELECT id, name, metadata
+        FROM public.sources
+        WHERE id = %s AND client_id = %s
+        """,
+        [source_id, client_id],
+    ).fetchone()
+    if not src:
+        return {"removedChunks": removed_chunks, "removedSourceId": removed_source_id}
+
+    meta = src.get("metadata")
+    name = str(src.get("name") or "")
+    is_doc_source = is_document_internal_source_metadata(meta) or name.startswith("doc:")
+    doc_id_in_meta = (
+        isinstance(meta, dict) and str(meta.get("documentId") or "") == document_id
+    )
+    if not is_doc_source and not doc_id_in_meta and not name.startswith(f"doc:{document_id}:"):
+        return {"removedChunks": removed_chunks, "removedSourceId": removed_source_id}
+
+    chunk_del = conn.execute(
+        "DELETE FROM public.risk_entity_chunks WHERE source_id = %s",
+        [source_id],
+    )
+    removed_chunks = int(chunk_del.rowcount or 0)
+    conn.execute("DELETE FROM public.sources WHERE id = %s", [source_id])
+    removed_source_id = int(source_id)
+    return {"removedChunks": removed_chunks, "removedSourceId": removed_source_id}
 
 
 def documents_presign_pg(body: dict[str, Any]) -> dict[str, Any]:
@@ -254,6 +308,21 @@ def _party_entity_body(client_id: int, user_id: int, party: dict[str, Any], docu
     return body
 
 
+def _pick_primary_party(parties: list[Any]) -> dict[str, Any] | None:
+    for p in parties:
+        if isinstance(p, dict) and p.get("isPrimary"):
+            return p
+    for p in parties:
+        if isinstance(p, dict) and (
+            p.get("partyType") == "organization" or p.get("party_type") == "organization"
+        ):
+            return p
+    for p in parties:
+        if isinstance(p, dict):
+            return p
+    return None
+
+
 def _resolve_party_entity(
     *,
     client_id: int,
@@ -265,7 +334,7 @@ def _resolve_party_entity(
     auto_create: bool,
 ) -> tuple[str | None, str]:
     """Returns (entity_id, action) action in matched|created|skipped|primary."""
-    from nuwa_entities_pg import entities_create_pg
+    from nuwa_entities_pg import entities_create_pg, enrich_entity_from_party_pg
 
     rfc = party.get("rfc")
     curp = party.get("curp")
@@ -274,6 +343,7 @@ def _resolve_party_entity(
         for c in candidates:
             if c.get("rfc") and normalize_identifier(str(c["rfc"])) == nr:
                 eid = str(c["id"])
+                enrich_entity_from_party_pg(entity_id=eid, party=party, user_id=user_id)
                 if primary_entity_id and eid == primary_entity_id:
                     return eid, "primary"
                 return eid, "matched"
@@ -282,6 +352,7 @@ def _resolve_party_entity(
         for c in candidates:
             if c.get("curp") and normalize_identifier(str(c["curp"])) == nc:
                 eid = str(c["id"])
+                enrich_entity_from_party_pg(entity_id=eid, party=party, user_id=user_id)
                 if primary_entity_id and eid == primary_entity_id:
                     return eid, "primary"
                 return eid, "matched"
@@ -296,10 +367,11 @@ def _resolve_party_entity(
         rfc=rfc,
         curp=curp,
         candidates=candidates,
-        min_confidence=90,
+        min_confidence=70,
     )
-    if has_strong_match(matches):
+    if matches and int(matches[0].get("confidence") or 0) >= 70:
         eid = matches[0]["entityId"]
+        enrich_entity_from_party_pg(entity_id=eid, party=party, user_id=user_id)
         if primary_entity_id and eid == primary_entity_id:
             return eid, "primary"
         return eid, "matched"
@@ -382,7 +454,10 @@ def documents_finalize_pg(body: dict[str, Any]) -> dict[str, Any]:
             }
 
     primary_entity_id = body.get("primaryEntityId")
-    if primary_entity_id:
+    skip_primary_link = body.get("skipPrimaryLink") is True
+    if skip_primary_link:
+        primary_entity_id = None
+    elif primary_entity_id:
         primary_entity_id = str(primary_entity_id)
         with _conn() as conn:
             er = conn.execute(
@@ -407,10 +482,14 @@ def documents_finalize_pg(body: dict[str, Any]) -> dict[str, Any]:
     if fin_req:
         extracted = {**extracted, "_finalizeRequestId": fin_req}
 
+    parties_list = [p for p in (extracted.get("parties") or []) if isinstance(p, dict)]
+    primary_party = _pick_primary_party(parties_list)
+
     candidates = _fetch_all_entity_candidates(client_id)
     links_created = 0
     entities_created = 0
     entities_matched = 0
+    entities_enriched = 0
     source_id: int | None = int(row["source_id"]) if row.get("source_id") else None
     chunk_texts: list[str] = []
 
@@ -425,31 +504,7 @@ def documents_finalize_pg(body: dict[str, Any]) -> dict[str, Any]:
             [Json(extracted), extracted_text, summary, doc_date, document_id],
         )
 
-        if primary_entity_id:
-            conn.execute(
-                "UPDATE public.documents SET primary_entity_id = %s::uuid WHERE document_id = %s::uuid",
-                [primary_entity_id, document_id],
-            )
-            conn.execute(
-                "UPDATE public.document_entity_links SET is_primary = false WHERE document_id = %s::uuid",
-                [document_id],
-            )
-            _upsert_link(
-                conn,
-                client_id=client_id,
-                document_id=document_id,
-                entity_id=primary_entity_id,
-                role="primary",
-                is_primary=True,
-                confidence=100.0,
-                payload={"source": "user_primary"},
-                mention_source="manual",
-            )
-            links_created += 1
-
-        for party in extracted.get("parties") or []:
-            if not isinstance(party, dict):
-                continue
+        for party in parties_list:
             eid, action = _resolve_party_entity(
                 client_id=client_id,
                 user_id=user_id,
@@ -465,7 +520,11 @@ def documents_finalize_pg(body: dict[str, Any]) -> dict[str, Any]:
                 entities_created += 1
             elif action in ("matched", "primary"):
                 entities_matched += 1
-            is_pri = primary_entity_id == eid
+                if action == "matched":
+                    entities_enriched += 1
+            if not skip_primary_link and not primary_entity_id and party.get("isPrimary"):
+                primary_entity_id = eid
+            is_pri = bool(primary_entity_id and primary_entity_id == eid)
             conf = party.get("confidence")
             try:
                 conf_f = float(conf) if conf is not None else None
@@ -483,10 +542,54 @@ def documents_finalize_pg(body: dict[str, Any]) -> dict[str, Any]:
             )
             links_created += 1
 
+        if primary_entity_id and not skip_primary_link:
+            conn.execute(
+                "UPDATE public.documents SET primary_entity_id = %s::uuid WHERE document_id = %s::uuid",
+                [primary_entity_id, document_id],
+            )
+            from nuwa_entities_pg import enrich_entity_from_party_pg, promote_entity_on_document_primary
+
+            if body.get("primaryEntityId"):
+                conn.execute(
+                    "UPDATE public.document_entity_links SET is_primary = false WHERE document_id = %s::uuid",
+                    [document_id],
+                )
+                _upsert_link(
+                    conn,
+                    client_id=client_id,
+                    document_id=document_id,
+                    entity_id=primary_entity_id,
+                    role=(
+                        body.get("primaryEntityRole")
+                        or (primary_party.get("role") if primary_party else None)
+                        or "primary"
+                    ),
+                    is_primary=True,
+                    confidence=100.0,
+                    payload={"source": "user_primary"},
+                    mention_source="manual",
+                )
+                links_created += 1
+
+            promote_entity_on_document_primary(primary_entity_id, client_id, user_id)
+            enrich_party = primary_party
+            if enrich_party:
+                if enrich_entity_from_party_pg(
+                    entity_id=primary_entity_id,
+                    party=enrich_party,
+                    user_id=user_id,
+                ):
+                    entities_enriched += 1
+        elif skip_primary_link:
+            conn.execute(
+                "UPDATE public.documents SET primary_entity_id = NULL WHERE document_id = %s::uuid",
+                [document_id],
+            )
+
         if auto_index:
             chunk_texts = build_index_chunks(extracted)
             if chunk_texts and source_id is None:
-                scid = _default_source_category_id(conn)
+                scid = _document_source_category_id(conn)
                 ins = conn.execute(
                     """
                     INSERT INTO public.sources (
@@ -531,6 +634,7 @@ def documents_finalize_pg(body: dict[str, Any]) -> dict[str, Any]:
             "_linksCreated": links_created,
             "_entitiesCreated": entities_created,
             "_entitiesMatched": entities_matched,
+            "_entitiesEnriched": entities_enriched,
         }
         conn.execute(
             """
@@ -561,6 +665,7 @@ def documents_finalize_pg(body: dict[str, Any]) -> dict[str, Any]:
         "linksCreated": links_created,
         "entitiesCreated": entities_created,
         "entitiesMatched": entities_matched,
+        "entitiesEnriched": entities_enriched,
         "sourceId": source_id,
     }
 
@@ -708,16 +813,37 @@ def documents_delete_pg(body: dict[str, Any]) -> dict[str, Any]:
             delete_object(row["s3_key"])
         except Exception:
             pass
+    source_id = int(row["source_id"]) if row.get("source_id") is not None else None
     with _conn() as conn:
+        purge = _purge_document_search_index(
+            conn,
+            source_id=source_id,
+            document_id=document_id,
+            client_id=client_id,
+        )
         conn.execute(
-            """
-            UPDATE public.documents SET status = 'deleted', deleted_at = now(), updated_at = now()
-            WHERE document_id = %s::uuid AND client_id = %s
-            """,
+            "DELETE FROM public.document_entity_links WHERE document_id = %s::uuid AND client_id = %s",
             [document_id, client_id],
         )
+        del_row = conn.execute(
+            """
+            DELETE FROM public.documents
+            WHERE document_id = %s::uuid AND client_id = %s
+            RETURNING document_id
+            """,
+            [document_id, client_id],
+        ).fetchone()
+        if not del_row:
+            raise SupabaseRestError(404, "Documento no encontrado")
         conn.commit()
-    return {"success": True, "documentId": document_id, "status": "deleted"}
+    return {
+        "success": True,
+        "documentId": document_id,
+        "status": "deleted",
+        "deletedFromS3": delete_s3,
+        "removedChunks": purge["removedChunks"],
+        "removedSourceId": purge["removedSourceId"],
+    }
 
 
 def documents_download_url_pg(body: dict[str, Any]) -> dict[str, Any]:

@@ -23,8 +23,9 @@ fi
 : "${NUWA_CDK_ENVIRONMENT:=prod}"
 : "${NUWA_CDK_USE_DATABASE:=true}"
 : "${NUWA_CDK_REUSE_SECRETS:=true}"
-: "${NUWA_RDS_VPC_ID:=vpc-0dc24fcb6dec4f5db}"
+: "${NUWA_LAMBDA_OUTSIDE_VPC:=false}"
 : "${NUWA_RDS_SG_ID:=sg-02664d9e7ccd46830}"
+: "${NUWA_RDS_VPC_ID:=vpc-0dc24fcb6dec4f5db}"
 : "${NUWA_LAMBDA_SUBNET_IDS:=subnet-092397141c9ed4e58,subnet-0d78b173be4b53f2d}"
 : "${NUWA_LAMBDA_ROUTE_TABLE_IDS:=rtb-0467093de9dda0766}"
 : "${NUWA_CDK_VERSION:=2.170.0}"
@@ -145,10 +146,15 @@ fi
   printf '  -c environment=%s \\\n' "${NUWA_CDK_ENVIRONMENT}"
   printf '  -c useDatabase=%s \\\n' "${NUWA_CDK_USE_DATABASE}"
   printf '  -c reuseAllExternalSecrets=%s \\\n' "${NUWA_CDK_REUSE_SECRETS}"
-  printf '  -c rdsVpcId=%s \\\n' "${NUWA_RDS_VPC_ID}"
-  printf '  -c rdsSecurityGroupId=%s \\\n' "${NUWA_RDS_SG_ID}"
-  printf '  -c "lambdaSubnetIds=%s" \\\n' "${NUWA_LAMBDA_SUBNET_IDS}"
-  printf '  -c "lambdaRouteTableIds=%s"\n' "${NUWA_LAMBDA_ROUTE_TABLE_IDS}"
+  if [[ "${NUWA_LAMBDA_OUTSIDE_VPC}" == "true" ]]; then
+    printf '  -c lambdaOutsideVpc=true \\\n'
+    printf '  -c rdsSecurityGroupId=%s\n' "${NUWA_RDS_SG_ID}"
+  else
+    printf '  -c rdsVpcId=%s \\\n' "${NUWA_RDS_VPC_ID}"
+    printf '  -c rdsSecurityGroupId=%s \\\n' "${NUWA_RDS_SG_ID}"
+    printf '  -c "lambdaSubnetIds=%s" \\\n' "${NUWA_LAMBDA_SUBNET_IDS}"
+    printf '  -c "lambdaRouteTableIds=%s"\n' "${NUWA_LAMBDA_ROUTE_TABLE_IDS}"
+  fi
 }
 
 echo ""

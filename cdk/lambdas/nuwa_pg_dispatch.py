@@ -476,8 +476,12 @@ def _sources_list_visibility_sql() -> str:
 
 
 def _sources_list_exclude_document_internal_sql() -> str:
-    """Fuentes auto-creadas por documents/finalize (metadata.documentId / sourceOrigin)."""
-    return "NOT (COALESCE(s.metadata, '{}'::jsonb) ? 'documentId')"
+    """Fuentes auto-creadas por documents/finalize (metadata.documentId / doc:%)."""
+    # psycopg: literal % must be doubled (%%)
+    return """NOT (
+      (COALESCE(s.metadata, '{}'::jsonb) ? 'documentId')
+      OR COALESCE(s.name, '') LIKE 'doc:%%'
+    )"""
 
 
 def list_sources_pg(

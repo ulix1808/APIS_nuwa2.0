@@ -35,7 +35,49 @@ def _iso_z(dt: Any) -> str | None:
     return str(dt)
 
 
+def _metadata_as_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    return {}
+
+
+def _contact_fields(meta: dict[str, Any]) -> dict[str, str | None]:
+    def pick(*keys: str) -> str | None:
+        for key in keys:
+            raw = meta.get(key)
+            if raw is None:
+                continue
+            text = str(raw).strip()
+            if text:
+                return text
+        return None
+
+    return {
+        "address": pick("address", "direccion", "domicilio"),
+        "phone": pick("phone", "telefono", "tel"),
+        "email": pick("email", "correo"),
+        "website": pick("website", "sitioWeb", "web", "url"),
+    }
+
+
+def _merge_entity_metadata(row: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+    meta = _metadata_as_dict(row.get("metadata"))
+    if isinstance(body.get("metadata"), dict):
+        meta.update(body["metadata"])
+    for key in ("address", "phone", "email", "website"):
+        if key not in body:
+            continue
+        val = body[key]
+        if val is None or (isinstance(val, str) and not val.strip()):
+            meta.pop(key, None)
+        else:
+            meta[key] = str(val).strip()
+    return meta
+
+
 def _entity_api(row: dict[str, Any], *, report_count: int | None = None) -> dict[str, Any]:
+    meta = _metadata_as_dict(row.get("metadata"))
+    contact = _contact_fields(meta)
     return {
         "entityId": str(row["id"]),
         "name": row.get("name"),
@@ -57,6 +99,8 @@ def _entity_api(row: dict[str, Any], *, report_count: int | None = None) -> dict
         "lastScreeningAt": _iso_z(row.get("last_screening_at")),
         "createdAt": _iso_z(row.get("created_at")),
         "updatedAt": _iso_z(row.get("updated_at")),
+        "metadata": meta,
+        **contact,
     }
 
 
@@ -64,7 +108,14 @@ def _fetch_candidates(client_id: int, party_type: str | None) -> list[dict[str, 
     where = [
         "e.client_id = %s",
         "e.status <> 'deleted'",
-        "e.last_screening_at >= now() - interval '30 days'",
+        """(
+            e.last_screening_at >= now() - interval '30 days'
+            OR e.created_at >= now() - interval '30 days'
+            OR EXISTS (
+                SELECT 1 FROM public.reports r
+                WHERE r.entity_id = e.id AND r.status = 'active'
+            )
+        )""",
     ]
     params: list[Any] = [client_id]
     if party_type in ("individual", "organization"):
@@ -257,6 +308,42 @@ def entities_create_pg(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _entity_visible_in_ui_sql(alias: str = "e") -> str:
+    """Menciones documentales secundarias ocultas; primarias de documento y con reportes visibles."""
+    return f"""(
+      {alias}.category <> 'document_mention'
+      OR EXISTS (
+        SELECT 1 FROM public.documents d
+        WHERE d.client_id = {alias}.client_id
+          AND d.primary_entity_id = {alias}.id
+      )
+      OR EXISTS (
+        SELECT 1 FROM public.reports r
+        WHERE r.entity_id = {alias}.id AND r.status = 'active'
+      )
+    )"""
+
+
+def promote_entity_on_document_primary(
+    entity_id: str,
+    client_id: int,
+    user_id: int,
+) -> None:
+    """Entidad principal de un documento pasa a categoría screening (visible en /entities)."""
+    sql = """
+    UPDATE public.entities SET
+      category = 'screening',
+      updated_by_user_id = %s,
+      updated_at = now()
+    WHERE id = %s::uuid AND client_id = %s
+      AND status <> 'deleted'
+      AND category = 'document_mention'
+    """
+    with _conn() as conn:
+        conn.execute(sql, [user_id, entity_id, client_id])
+        conn.commit()
+
+
 def entities_list_pg(body: dict[str, Any]) -> dict[str, Any]:
     client_id = int(body["clientId"])
     lim = max(1, min(int(body.get("limit") or 50), 200))
@@ -280,7 +367,7 @@ def entities_list_pg(body: dict[str, Any]) -> dict[str, Any]:
         where.append("e.parent_entity_id = %s::uuid")
         params.append(body["parentEntityId"])
     if not body.get("includeDocumentMentions"):
-        where.append("e.category <> 'document_mention'")
+        where.append(_entity_visible_in_ui_sql("e"))
     search = (body.get("search") or "").strip()
     if search:
         where.append(
@@ -408,6 +495,7 @@ def entities_update_pg(body: dict[str, Any]) -> dict[str, Any]:
 
     status = body.get("status") or row["status"]
     risk = body.get("riskLevel") or row.get("risk_level")
+    metadata = _merge_entity_metadata(row, body)
 
     sql = """
     UPDATE public.entities SET
@@ -416,7 +504,8 @@ def entities_update_pg(body: dict[str, Any]) -> dict[str, Any]:
       party_type = %s, party_type_label = %s,
       first_name = %s, last_name = %s, legal_name = %s, full_name = %s,
       category = %s, rfc = %s, curp = %s, country = %s,
-      relationship_role = %s, status = %s, risk_level = %s
+      relationship_role = %s, status = %s, risk_level = %s,
+      metadata = %s
     WHERE id = %s::uuid AND client_id = %s
     RETURNING *
     """
@@ -437,6 +526,7 @@ def entities_update_pg(body: dict[str, Any]) -> dict[str, Any]:
         fields["relationship_role"],
         status,
         risk,
+        Json(metadata),
         entity_id,
         client_id,
     ]
@@ -466,21 +556,23 @@ def entities_delete_pg(body: dict[str, Any]) -> dict[str, Any]:
 
 def entities_stats_pg(body: dict[str, Any]) -> dict[str, Any]:
     client_id = int(body["clientId"])
-    sql = """
+    visibility = _entity_visible_in_ui_sql("e")
+    sql = f"""
     SELECT
       COUNT(*)::int AS total,
-      COUNT(*) FILTER (WHERE status IN ('under_review','flagged'))::int AS in_review,
-      COUNT(*) FILTER (WHERE party_type = 'individual')::int AS individuals,
+      COUNT(*) FILTER (WHERE e.status IN ('under_review','flagged'))::int AS in_review,
+      COUNT(*) FILTER (WHERE e.party_type = 'individual')::int AS individuals,
       COUNT(*) FILTER (
-        WHERE party_type = 'individual' AND risk_level IN ('high','critical')
+        WHERE e.party_type = 'individual' AND e.risk_level IN ('high','critical')
       )::int AS individuals_high,
-      COUNT(*) FILTER (WHERE party_type = 'organization')::int AS organizations,
+      COUNT(*) FILTER (WHERE e.party_type = 'organization')::int AS organizations,
       COUNT(*) FILTER (
-        WHERE party_type = 'organization' AND risk_level IN ('high','critical')
+        WHERE e.party_type = 'organization' AND e.risk_level IN ('high','critical')
       )::int AS organizations_high,
-      COUNT(*) FILTER (WHERE risk_level IN ('high','critical'))::int AS high_total
-    FROM public.entities
-    WHERE client_id = %s AND status <> 'deleted'
+      COUNT(*) FILTER (WHERE e.risk_level IN ('high','critical'))::int AS high_total
+    FROM public.entities e
+    WHERE e.client_id = %s AND e.status <> 'deleted'
+      AND {visibility}
     """
     with _conn() as conn:
         r = conn.execute(sql, [client_id]).fetchone()
@@ -608,6 +700,91 @@ def entities_monitoring_list_pg(body: dict[str, Any]) -> dict[str, Any]:
         ent["nextRunAt"] = _iso_z(r.get("next_run_at"))
         items.append(ent)
     return {"items": items, "total": total}
+
+
+def enrich_entity_from_party_pg(
+    *,
+    entity_id: str,
+    party: dict[str, Any],
+    user_id: int,
+) -> bool:
+    """Completa RFC/CURP/país/contacto vacíos desde una party extraída de documento."""
+    sql = """
+    SELECT * FROM public.entities
+    WHERE id = %s::uuid AND status <> 'deleted'
+    """
+    with _conn() as conn:
+        row = conn.execute(sql, [entity_id]).fetchone()
+        if not row:
+            return False
+        current = dict(row)
+        meta = _metadata_as_dict(current.get("metadata"))
+        changed = False
+
+        party_rfc = normalize_identifier(party.get("rfc"))
+        if party_rfc and not current.get("rfc"):
+            current["rfc"] = party_rfc
+            changed = True
+
+        party_curp = normalize_identifier(party.get("curp"))
+        if party_curp and not current.get("curp"):
+            current["curp"] = party_curp
+            changed = True
+
+        party_country = party.get("country")
+        if party_country and not current.get("country"):
+            current["country"] = str(party_country).strip()
+            changed = True
+
+        address = party.get("address") or party.get("domicilio") or party.get("direccion")
+        if address and not meta.get("address"):
+            meta["address"] = str(address).strip()
+            changed = True
+
+        phones = party.get("phones") or []
+        if isinstance(phones, list) and phones and not meta.get("phone"):
+            first_phone = str(phones[0]).strip()
+            if first_phone:
+                meta["phone"] = first_phone
+                changed = True
+
+        emails = party.get("emails") or []
+        if isinstance(emails, list) and emails and not meta.get("email"):
+            first_email = str(emails[0]).strip()
+            if first_email:
+                meta["email"] = first_email
+                changed = True
+
+        website = party.get("website") or party.get("sitioWeb") or party.get("url")
+        if website and not meta.get("website"):
+            meta["website"] = str(website).strip()
+            changed = True
+
+        if not changed:
+            return False
+
+        conn.execute(
+            """
+            UPDATE public.entities SET
+              updated_by_user_id = %s,
+              rfc = %s,
+              curp = %s,
+              country = %s,
+              metadata = %s,
+              updated_at = now()
+            WHERE id = %s::uuid
+            """,
+            [
+                user_id,
+                current.get("rfc"),
+                current.get("curp"),
+                current.get("country"),
+                Json(meta),
+                entity_id,
+            ],
+        )
+        conn.commit()
+    return True
 
 
 def touch_entity_after_report_pg(

@@ -12,6 +12,7 @@ DEFAULT_MAX_BYTES = 50 * 1024 * 1024
 
 # Fuentes/chunks auto-creados por documents/finalize: sin riesgo de lista (solo contexto KYC).
 DOCUMENT_SOURCE_RISK_LEVEL = 0
+DOCUMENT_SOURCE_CATEGORY_SLUG = "documento_interno"
 
 ALLOWED_MIME_PREFIXES = (
     "application/pdf",

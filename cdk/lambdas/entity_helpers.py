@@ -135,6 +135,47 @@ def name_similarity(a: str, b: str) -> int:
     return round((1 - dist / max(len(na), len(nb))) * 100)
 
 
+_PAREN_ALIAS_RE = re.compile(r"\(([^)]+)\)")
+
+
+def _organization_name_variants(c: dict[str, Any]) -> list[str]:
+    variants: list[str] = []
+    seen: set[str] = set()
+
+    def add(raw: str | None) -> None:
+        n = normalize_name(raw or "")
+        if n and n not in seen:
+            seen.add(n)
+            variants.append(n)
+
+    for key in ("legal_name", "name", "full_name"):
+        add(c.get(key))
+    for key in ("legal_name", "name", "full_name"):
+        raw = c.get(key)
+        if isinstance(raw, str):
+            for m in _PAREN_ALIAS_RE.finditer(raw):
+                add(m.group(1))
+    return variants
+
+
+def _best_name_similarity(search: str, variants: list[str]) -> int:
+    if not search or not variants:
+        return 0
+    return max(name_similarity(search, v) for v in variants)
+
+
+def _token_or_alias_match(search: str, variants: list[str]) -> tuple[bool, int, str]:
+    ns = normalize_name(search)
+    if len(ns) < 2:
+        return False, 0, ""
+    for v in variants:
+        if ns == v:
+            return True, 95, f"Nombre coincidente"
+        if len(ns) >= 2 and ns in v.split():
+            return True, 92, f"Coincidencia por término o siglas: {search}"
+    return False, 0, ""
+
+
 def _word_overlap_score(a: str, b: str) -> int:
     wa = [w for w in normalize_name(a).split() if len(w) > 2]
     wb = [w for w in normalize_name(b).split() if len(w) > 2]
@@ -192,7 +233,16 @@ def find_matches(
         if party_type == "organization":
             has_name = bool(search_legal)
             has_id = bool(search_rfc)
-            name_ok = has_name and (search_legal == c_legal or name_similarity(search_legal, c_legal) >= 85)
+            name_variants = _organization_name_variants(c)
+            token_ok, token_conf, token_detail = (
+                _token_or_alias_match(search_legal, name_variants) if has_name else (False, 0, "")
+            )
+            sim = _best_name_similarity(search_legal, name_variants) if has_name else 0
+            if token_ok and token_conf > sim:
+                sim = token_conf
+            name_ok = has_name and (
+                search_legal in name_variants or sim >= 85 or token_ok
+            )
             id_ok = has_id and search_rfc and search_rfc == c_rfc
             if has_name and has_id:
                 if name_ok and id_ok:
@@ -200,13 +250,16 @@ def find_matches(
                 elif id_ok:
                     matches.append(_match_row(c, "exact_identifier", 95, f"RFC coincide: {c.get('rfc')}"))
                 elif name_ok:
-                    sim = name_similarity(search_legal, c_legal or c_name)
-                    matches.append(_match_row(c, "fuzzy_name", sim, f"Razón social similar ({sim}%)"))
+                    detail = token_detail if token_ok else f"Razón social similar ({sim}%)"
+                    match_type = "exact_name" if token_ok or search_legal in name_variants else "fuzzy_name"
+                    conf = max(sim, token_conf)
+                    matches.append(_match_row(c, match_type, conf, detail))
             elif has_id and id_ok:
                 matches.append(_match_row(c, "exact_identifier", 100, f"RFC coincide: {c.get('rfc')}"))
             elif has_name:
-                sim = name_similarity(search_legal, c_legal or c_name)
-                if sim >= 85:
+                if token_ok:
+                    matches.append(_match_row(c, "exact_name", token_conf, token_detail))
+                elif sim >= 85:
                     matches.append(_match_row(c, "fuzzy_name", sim, f"Razón social similar ({sim}%)"))
                 elif sim >= min_confidence:
                     matches.append(_match_row(c, "word_overlap", sim, f"Nombre similar ({sim}%)"))

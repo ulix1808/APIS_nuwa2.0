@@ -38,6 +38,7 @@ class NuwaApiStack(Stack):
         reuse_supabase_secret: bool = False,
         reuse_app_crypto_secret: bool = False,
         lambda_vpc_for_rds: dict[str, str] | None = None,
+        rds_public_lambda_access_sg_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -171,6 +172,20 @@ class NuwaApiStack(Stack):
             environment=lambda_env,
             log_retention=logs.RetentionDays.TWO_WEEKS,
         )
+
+        if rds_public_lambda_access_sg_id:
+            # Lambdas fuera de VPC: RDS debe ser PubliclyAccessible y aceptar 5432 desde Internet.
+            # Mitigación: credenciales en Secrets Manager + sslmode=require en el JSON del secreto.
+            ec2.CfnSecurityGroupIngress(
+                self,
+                "RdsIngressFromLambdaNoVpc",
+                group_id=rds_public_lambda_access_sg_id,
+                ip_protocol="tcp",
+                from_port=5432,
+                to_port=5432,
+                cidr_ip="0.0.0.0/0",
+                description="PostgreSQL desde Lambdas Nuwa fuera de VPC (FinOps: sin VPCE)",
+            )
 
         if lambda_vpc_for_rds:
             vpc_id = lambda_vpc_for_rds["vpc_id"]

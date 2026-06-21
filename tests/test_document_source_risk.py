@@ -7,6 +7,12 @@ import pytest
 from document_helpers import DOCUMENT_SOURCE_RISK_LEVEL, document_source_metadata
 
 
+def test_document_source_category_slug() -> None:
+    from document_helpers import DOCUMENT_SOURCE_CATEGORY_SLUG
+
+    assert DOCUMENT_SOURCE_CATEGORY_SLUG == "documento_interno"
+
+
 def test_document_source_risk_level_is_zero() -> None:
     assert DOCUMENT_SOURCE_RISK_LEVEL == 0
 
