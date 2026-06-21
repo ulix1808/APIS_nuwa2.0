@@ -10,6 +10,9 @@ from typing import Any
 
 DEFAULT_MAX_BYTES = 50 * 1024 * 1024
 
+# Fuentes/chunks auto-creados por documents/finalize: sin riesgo de lista (solo contexto KYC).
+DOCUMENT_SOURCE_RISK_LEVEL = 0
+
 ALLOWED_MIME_PREFIXES = (
     "application/pdf",
     "text/csv",
@@ -85,3 +88,33 @@ def build_index_chunks(extracted: dict[str, Any]) -> list[str]:
             chunks.append(json.dumps({"type": "identifier", **ident}, ensure_ascii=False))
 
     return [c for c in chunks if c.strip()]
+
+
+def document_source_metadata(
+    *,
+    document_id: str,
+    client_id: int,
+    primary_entity_id: str | None,
+    document_type: Any,
+) -> dict[str, Any]:
+    """Metadata de sources privadas creadas por documents/finalize (autoIndex)."""
+    meta: dict[str, Any] = {
+        "sourceOrigin": "document",
+        "sourceKind": "document",
+        "documentId": document_id,
+        "clientId": client_id,
+    }
+    if primary_entity_id:
+        meta["primaryEntityId"] = primary_entity_id
+    if document_type is not None:
+        meta["documentType"] = document_type
+    return meta
+
+
+def is_document_internal_source_metadata(metadata: Any) -> bool:
+    """True si la fila sources proviene del módulo de documentos internos."""
+    if not isinstance(metadata, dict):
+        return False
+    if metadata.get("sourceOrigin") == "document":
+        return True
+    return bool(metadata.get("documentId"))

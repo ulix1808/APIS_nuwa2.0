@@ -10,7 +10,14 @@ from typing import Any
 import psycopg.errors
 from psycopg.types.json import Json
 
-from document_helpers import build_index_chunks, document_s3_key, max_upload_bytes, mime_allowed
+from document_helpers import (
+    build_index_chunks,
+    document_s3_key,
+    document_source_metadata,
+    DOCUMENT_SOURCE_RISK_LEVEL,
+    max_upload_bytes,
+    mime_allowed,
+)
 from entity_helpers import find_matches, has_strong_match, normalize_identifier
 from nuwa_chunks import ingest_chunks
 from nuwa_errors import SupabaseRestError
@@ -485,20 +492,21 @@ def documents_finalize_pg(body: dict[str, Any]) -> dict[str, Any]:
                     INSERT INTO public.sources (
                       name, risk_level, visibility, client_id, created_by_user_id,
                       metadata, source_category_id
-                    ) VALUES (%s, 1, 'private', %s, %s, %s, %s)
+                    ) VALUES (%s, %s, 'private', %s, %s, %s, %s)
                     RETURNING id
                     """,
                     [
                         f"doc:{document_id}:{row['original_filename']}",
+                        DOCUMENT_SOURCE_RISK_LEVEL,
                         client_id,
                         user_id,
                         Json(
-                            {
-                                "documentId": document_id,
-                                "clientId": client_id,
-                                "primaryEntityId": primary_entity_id,
-                                "documentType": extracted.get("documentType"),
-                            }
+                            document_source_metadata(
+                                document_id=document_id,
+                                client_id=client_id,
+                                primary_entity_id=primary_entity_id,
+                                document_type=extracted.get("documentType"),
+                            )
                         ),
                         scid,
                     ],
@@ -507,6 +515,15 @@ def documents_finalize_pg(body: dict[str, Any]) -> dict[str, Any]:
                 conn.execute(
                     "UPDATE public.documents SET source_id = %s WHERE document_id = %s::uuid",
                     [source_id, document_id],
+                )
+            elif chunk_texts and source_id is not None:
+                conn.execute(
+                    """
+                    UPDATE public.sources
+                    SET risk_level = %s, updated_at = now()
+                    WHERE id = %s AND client_id = %s
+                    """,
+                    [DOCUMENT_SOURCE_RISK_LEVEL, source_id, client_id],
                 )
 
         extracted_out = {
@@ -531,7 +548,7 @@ def documents_finalize_pg(body: dict[str, Any]) -> dict[str, Any]:
             is_super_admin=False,
             chunk_texts=chunk_texts,
             replace_strategy="all",
-            risk_level=None,
+            risk_level=DOCUMENT_SOURCE_RISK_LEVEL,
             visibility="private",
             entity_type="document",
         )

@@ -343,11 +343,13 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     "includeInactiveCategories solo está permitido para super_admin."
                 )
             log_phase("sources_list", f"clientId={cid}")
+            inc_doc_sources = body.get("includeDocumentSources") is True
             items, total = list_sources(
                 viewer_client_id=cid,
                 limit=lim,
                 offset=off,
                 include_category=inc_cat,
+                include_document_sources=inc_doc_sources,
             )
             # Una sola consulta al catálogo global (sin N+1). RBAC: mismas categorías para todos los tenants.
             cat_rows = list_categories_catalog(active_only=not want_inactive_meta)

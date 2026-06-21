@@ -247,6 +247,20 @@ class NuwaApiStack(Stack):
                     private_dns_enabled=True,
                 )
 
+            # S3 Gateway: presign/head_object/upload-complete desde Lambdas en VPC (sin NAT).
+            lambda_route_table_ids = self.node.try_get_context("lambdaRouteTableIds")
+            if isinstance(lambda_route_table_ids, str):
+                lambda_route_table_ids = [x.strip() for x in lambda_route_table_ids.split(",") if x.strip()]
+            if lambda_route_table_ids:
+                ec2.CfnVPCEndpoint(
+                    self,
+                    "NuwaS3GatewayEndpoint",
+                    vpc_id=vpc_id,
+                    service_name=f"com.amazonaws.{self.region}.s3",
+                    vpc_endpoint_type="Gateway",
+                    route_table_ids=lambda_route_table_ids,
+                )
+
             # Default-VPC subnets suelen ser "públicas" (ruta a IGW); CDK exige esto explícitamente.
             # Ojo: Lambda en subnet pública no sale a Internet vía IGW; para Secrets Manager / logs hace
             # falta NAT en subnets privadas o VPC interface endpoints (p. ej. secretsmanager, logs).

@@ -471,16 +471,29 @@ def category_row_to_api(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _sources_list_visibility_sql() -> str:
+    return "(s.visibility = 'public' OR s.client_id = %s)"
+
+
+def _sources_list_exclude_document_internal_sql() -> str:
+    """Fuentes auto-creadas por documents/finalize (metadata.documentId / sourceOrigin)."""
+    return "NOT (COALESCE(s.metadata, '{}'::jsonb) ? 'documentId')"
+
+
 def list_sources_pg(
     viewer_client_id: int,
     limit: int,
     offset: int,
     *,
     include_category: bool = False,
+    include_document_sources: bool = False,
 ) -> tuple[int, list[dict[str, Any]]]:
     lim = max(1, min(int(limit), 200))
     off = max(0, int(offset))
-    where_sql = "(s.visibility = 'public' OR s.client_id = %s)"
+    where_parts = [_sources_list_visibility_sql()]
+    if not include_document_sources:
+        where_parts.append(_sources_list_exclude_document_internal_sql())
+    where_sql = " AND ".join(f"({p})" for p in where_parts)
     with _conn() as conn:
         crow = conn.execute(
             f"SELECT COUNT(*)::bigint AS n FROM public.sources s WHERE {where_sql}",

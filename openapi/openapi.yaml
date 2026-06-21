@@ -57,7 +57,8 @@ tags:
   - name: Documents
     description: |
       Documentos internos del cliente (PDF/CSV en S3). Presigned upload, finalize con JSON Grok,
-      auto-entidades `document_mention` e indexación en sources/chunks privados.
+      auto-entidades `document_mention` e indexación en sources/chunks privados (`riskLevel=0`, sin riesgo de lista).
+      Esas fuentes no aparecen en `POST /v1/sources/list` salvo `includeDocumentSources: true`.
   - name: ClientStorage
     description: Inicialización idempotente del prefijo S3 por `client_id`
   - name: Admin
@@ -157,6 +158,8 @@ paths:
       summary: Listar fuentes visibles para el tenant
       description: |
         Devuelve filas de `public.sources` con `visibility=public` **o** `client_id` igual al `clientId` del body (tenant en JWT).
+        **Excluye** fuentes auto-creadas por `POST /v1/documents/finalize` (`metadata.documentId` / `sourceOrigin=document`); siguen en BD para chunks y búsqueda.
+        Pasar `includeDocumentSources: true` en el body para incluirlas (debug/admin avanzado).
         Respuesta incluye **`success`**, **`meta.categories`** (catálogo completo en una sola carga; por defecto solo categorías **activas**) para poblar dropdowns sin segunda llamada.
         **`meta.categories`** es **global** (no hay segregación por tenant): cualquier usuario que pueda listar fuentes ve el mismo conjunto de categorías activas.
         Query opcional **`includeInactiveCategories=true`**: incluye también inactivas; **solo `super_admin`** (equivale al mismo flag en el body JSON).
@@ -784,6 +787,10 @@ paths:
       tags: [Documents]
       operationId: documentsFinalize
       summary: Persistir extracción Grok, entidades y chunks
+      description: |
+        Con `autoIndex: true` (default) crea una source privada (`metadata.documentId`, `sourceKind=document`)
+        y chunks en `risk_entity_chunks`, ambos con **`riskLevel=0`** (contenido interno, no listas de cumplimiento).
+        La source queda oculta del catálogo Admin en `POST /v1/sources/list` (ver `includeDocumentSources`).
       security: [{ BearerAuth: [] }]
       requestBody:
         required: true
@@ -1501,6 +1508,10 @@ components:
               type: boolean
               default: false
               description: Igual que el query param homónimo. Solo **super_admin**; amplía `meta.categories` con categorías inactivas.
+            includeDocumentSources:
+              type: boolean
+              default: false
+              description: Si true, incluye fuentes privadas creadas por el módulo de documentos (`metadata.documentId`). Por defecto se ocultan del catálogo Admin.
 
     GetSourceRequest:
       allOf:
@@ -2758,7 +2769,10 @@ components:
               $ref: "#/components/schemas/ExtractedDocumentJson"
             extractedText: { type: string }
             autoCreateEntities: { type: boolean, default: true }
-            autoIndex: { type: boolean, default: true }
+            autoIndex:
+              type: boolean
+              default: true
+              description: Si true, indexa en source/chunks privados con riskLevel=0 (no aparece en sources/list por defecto).
 
     DocumentFinalizeResponse:
       type: object

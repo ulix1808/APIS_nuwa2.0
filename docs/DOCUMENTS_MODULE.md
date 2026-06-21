@@ -46,6 +46,6 @@ curl -sS -X POST "$BASE/v1/clients/storage/init" \
 
 Requiere `cdk deploy` con stack actual (Lambda `*-lambda-documents` y bucket `*-client-documents`).
 
-Lambdas en VPC necesitan **S3 Gateway Endpoint** o NAT para presigned/HeadObject.
+Lambdas en VPC necesitan **S3 Gateway Endpoint** (o NAT) para `presign`, `head_object` y uploads. En prod: `vpce-0a65ed31f64c973be` en VPC `vpc-0dc24fcb6dec4f5db`, route table `rtb-0467093de9dda0766`. CDK: contexto `-c lambdaRouteTableIds=rtb-0467093de9dda0766`.
 
 CORS S3 prod: `https://app.nuwa.space`, `http://app.nuwa.space`, localhost.

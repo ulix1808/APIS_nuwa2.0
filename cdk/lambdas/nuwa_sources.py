@@ -46,6 +46,7 @@ def list_sources(
     limit: int,
     offset: int,
     include_category: bool = False,
+    include_document_sources: bool = False,
 ) -> tuple[list[dict[str, Any]], int | None]:
     """Devuelve (items en forma API, total global o None en modo PostgREST sin conteo)."""
     lim = max(1, min(int(limit), 200))
@@ -54,19 +55,24 @@ def list_sources(
         from nuwa_pg_dispatch import list_sources_pg
 
         total, rows = list_sources_pg(
-            viewer_client_id, lim, off, include_category=include_category
+            viewer_client_id,
+            lim,
+            off,
+            include_category=include_category,
+            include_document_sources=include_document_sources,
         )
         return [source_row_to_api(r, include_category=include_category) for r in rows], total
 
-    q = urlencode(
-        [
-            ("select", "*"),
-            ("or", f"(visibility.eq.public,client_id.eq.{viewer_client_id})"),
-            ("order", "id.desc"),
-            ("limit", str(lim)),
-            ("offset", str(off)),
-        ]
-    )
+    q_params: list[tuple[str, str]] = [
+        ("select", "*"),
+        ("or", f"(visibility.eq.public,client_id.eq.{viewer_client_id})"),
+        ("order", "id.desc"),
+        ("limit", str(lim)),
+        ("offset", str(off)),
+    ]
+    if not include_document_sources:
+        q_params.append(("metadata->documentId", "is.null"))
+    q = urlencode(q_params)
     log_phase("sources_list", "PostgREST")
     rows = rest_json("GET", "sources", query=q)
     if not rows:

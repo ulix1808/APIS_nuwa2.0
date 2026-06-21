@@ -66,7 +66,7 @@ Front → presign (API) → PUT directo S3 → upload-complete → finalize (Gro
 | `extractedJson` | JSON Grok: `parties`, `summary`, `documentType`, `addresses`, etc. |
 | `primaryEntityId` | Entidad principal del documento (opcional, validada en tenant) |
 | `autoCreateEntities` | Default `true` — crea entidades si no hay match fuerte |
-| `autoIndex` | Default `true` — source/chunks privados para search |
+| `autoIndex` | Default `true` — source/chunks privados para search (`risk_level=0`, `entity_type=document`) |
 | `extractedText` | Texto plano alternativo para indexación |
 | `requestId` | Idempotencia en reintentos de finalize |
 
@@ -187,7 +187,9 @@ Visibilidad: chunks **públicos** (fuentes globales + `client_id=1`) y **privado
 
 ### Indexación de documentos
 
-Tras `finalize`, si `autoIndex=true`, se crea una **source privada** del cliente y chunks derivados de `document_helpers.build_index_chunks(extractedJson)` — las partes y resumen quedan buscables vía `/v1/search` para ese tenant.
+Tras `finalize` con `autoIndex`, se crea una **source privada** (`risk_level=0`, `metadata.documentId`, `sourceKind=document`) y chunks en `risk_entity_chunks` con `risk_level=0` y `entity_type=document`. Esas fuentes **no aparecen** en `POST /v1/sources/list` salvo `includeDocumentSources: true`; siguen buscables vía `/v1/search` sin implicar riesgo de lista.
+
+Migración backfill histórico: `supabase/migrations/20260607120000_document_sources_risk_level_zero.sql`.
 
 ### Ingest manual de chunks
 
