@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlencode
 
+from chunk_normalize import prepare_chunk_text_for_storage
 from nuwa_config import is_database_mode
 from nuwa_errors import SupabaseRestError
 from nuwa_obs_log import log_phase
@@ -93,17 +94,20 @@ def _ingest_chunks_rest(
         log_phase("chunks_ingest", f"DELETE risk_entity_chunks source_id={source_id}")
         rest_json("DELETE", "risk_entity_chunks", query=f"source_id=eq.{source_id}")
 
-    batch = [
-        {
-            "client_id": client_id_src,
-            "risk_level": eff_rl,
-            "source_id": source_id,
-            "entity_type": eff_et[:200],
-            "chunk_text": txt,
-            "visibility": eff_vis,
-        }
-        for txt in chunk_texts
-    ]
+    batch = []
+    for txt in chunk_texts:
+        stored, normalized = prepare_chunk_text_for_storage(txt)
+        batch.append(
+            {
+                "client_id": client_id_src,
+                "risk_level": eff_rl,
+                "source_id": source_id,
+                "entity_type": eff_et[:200],
+                "chunk_text": stored,
+                "chunk_text_normalized": normalized or None,
+                "visibility": eff_vis,
+            }
+        )
     log_phase("chunks_ingest", f"POST {len(batch)} rows source_id={source_id}")
     rest_json("POST", "risk_entity_chunks", body=batch)
 

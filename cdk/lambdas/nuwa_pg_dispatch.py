@@ -19,6 +19,7 @@ from nuwa_config import get_database_config
 from nuwa_errors import SupabaseRestError
 from nuwa_obs_log import log_await, log_done, log_phase
 from source_risk_level import RISK_LEVEL_API_MESSAGE, is_valid_source_risk_level
+from chunk_normalize import prepare_chunk_text_for_storage
 
 
 def _parse_query(qs: str | None) -> dict[str, str]:
@@ -838,12 +839,17 @@ def ingest_chunks_pg(
     client_id_src = int(row0["client_id"])
     deleted = 0
     insert_sql = """
-    INSERT INTO public.risk_entity_chunks (client_id, risk_level, source_id, entity_type, chunk_text, visibility)
-    VALUES (%s, %s, %s, %s, %s, %s)
+    INSERT INTO public.risk_entity_chunks (
+      client_id, risk_level, source_id, entity_type, chunk_text, chunk_text_normalized, visibility
+    )
+    VALUES (%s, %s, %s, %s, %s, %s, %s)
     """
-    batch = [
-        (client_id_src, eff_rl, source_id, eff_et[:200], txt, eff_vis) for txt in chunk_texts
-    ]
+    batch: list[tuple[Any, ...]] = []
+    for raw_txt in chunk_texts:
+        stored, normalized = prepare_chunk_text_for_storage(raw_txt)
+        batch.append(
+            (client_id_src, eff_rl, source_id, eff_et[:200], stored, normalized or None, eff_vis)
+        )
     with _conn() as conn:
         if replace_strategy == "all":
             cur = conn.execute(

@@ -6,6 +6,7 @@ import base64
 import json
 from typing import Any
 
+from chunk_normalize import normalize_chunk_search_text
 from nuwa_config import DatabaseConfigError, SupabaseConfigError, ensure_data_backend, is_database_mode
 from nuwa_errors import SupabaseRestError
 from nuwa_http import json_response
@@ -66,7 +67,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if not jwt_allows_client(jwt_msg, client_id):
         return _response(403, {"code": "FORBIDDEN", "message": "clientId no permitido para este token."})
 
-    q = (body.get("query") or "").strip()
+    q = normalize_chunk_search_text((body.get("query") or "").strip())
     rfc = body.get("rfc")
     if isinstance(rfc, str):
         rfc = rfc.strip() or None
