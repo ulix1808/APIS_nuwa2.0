@@ -104,9 +104,9 @@ CREATE INDEX idx_entity_monitoring_due
   WHERE is_enabled = true;
 ```
 
-**Scheduler (futuro):** `SELECT * FROM entity_monitoring WHERE is_enabled AND next_run_at <= now()` → por cada fila, según `sources`:
-- `'compliance' IN sources` → `POST /v1/search` con datos de `entities`.
-- `'media' IN sources` → invocar pipeline de medios (servicio externo / Grok; no es el mismo RPC de chunks).
+**Scheduler (futuro):** ver spec unificado en el front Nuwa 2.0:  
+`docs/CONTINUOUS_MONITORING_ARCHITECTURE_20260822.md` (EventBridge en madrugada `America/Mexico_City`, BFF encola rescreen).  
+Resumen: `SELECT * FROM entity_monitoring WHERE is_enabled AND next_run_at <= now()` → enqueue BFF (no screening síncrono en Lambda).
 
 ### 2.3 Tabla `public.entity_monitoring_runs` (log)
 

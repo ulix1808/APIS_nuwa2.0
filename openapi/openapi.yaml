@@ -735,6 +735,155 @@ paths:
         "500":
           $ref: "#/components/responses/ServerError"
 
+  /v1/entities/monitoring/due:
+    post:
+      tags: [Entities]
+      summary: Listar monitorings vencidos (worker)
+      description: |
+        Solo servicio: header `x-monitoring-worker-secret` (o Bearer con el mismo secreto, sin JWT).
+        Usado por la Lambda EventBridge `monitoring-due-tick` → BFF enqueue-rescreen.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/entities/monitoring/run-start:
+    post:
+      tags: [Entities]
+      summary: Iniciar run de monitoreo
+      description: JWT de usuario o `x-monitoring-worker-secret`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientId, monitoringId]
+              properties:
+                clientId: { type: integer }
+                monitoringId: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/entities/monitoring/run-finish:
+    post:
+      tags: [Entities]
+      summary: Finalizar run de monitoreo (ok|error|skipped)
+      description: JWT de usuario o `x-monitoring-worker-secret`. Avanza `next_run_at` (calendario) o reintenta +1 día en error.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientId, runId, status]
+              properties:
+                clientId: { type: integer }
+                runId: { type: string, format: uuid }
+                status: { type: string, enum: [ok, error, skipped] }
+                reportFolio: { type: string }
+                riskBefore: { type: string }
+                riskAfter: { type: string }
+                error: { type: string }
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/entities/alerts/list:
+    post:
+      tags: [Entities]
+      summary: Listar alertas de entidades del tenant
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientId]
+              properties:
+                clientId: { type: integer }
+                status: { type: string }
+                limit: { type: integer }
+                offset: { type: integer }
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/entities/alerts/ack:
+    post:
+      tags: [Entities]
+      summary: Acusar / cambiar estado de alerta
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientId, alertId, status]
+              properties:
+                clientId: { type: integer }
+                alertId: { type: string, format: uuid }
+                status: { type: string, enum: [reviewed, dismissed, escalated] }
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/entities/alerts/create:
+    post:
+      tags: [Entities]
+      summary: Crear alerta (usuario o worker)
+      description: JWT o `x-monitoring-worker-secret`. Valida que `entityId` pertenezca a `clientId`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientId, entityId, alertType, title]
+              properties:
+                clientId: { type: integer }
+                entityId: { type: string, format: uuid }
+                alertType:
+                  type: string
+                  enum: [risk_change, new_match, new_media_mention, status_change]
+                severity: { type: string, enum: [low, medium, high] }
+                title: { type: string }
+                description: { type: string }
+                payload: { type: object }
+      responses:
+        "201":
+          description: Created
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/clients/storage/init:
     post:
       tags: [ClientStorage]

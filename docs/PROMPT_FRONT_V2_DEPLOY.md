@@ -21,12 +21,14 @@ La infraestructura AWS ya está lista; falta ajustar el código del front, varia
 |---------|-------|
 | Dominio | `app.nuwa.space` → ALB `nuwa-app` |
 | EC2 | `Nuwa_OptimusPrime` — IP pública `3.92.3.96` |
-| Contenedor | Next.js en puerto **3001** |
+| Contenedor | Next.js escucha **directo** en puerto **3001** (sin nginx intermedio) |
 | Target group ALB | `nuwa-front-v2` → instancia `i-068d242c31169c509:3001` |
 | Regla ALB | Path `/v2*` → target group `nuwa-front-v2` (listeners :443 y :80) |
-| Health check ALB | Temporal: path `/`, matcher `200-404` (cambiar a `/v2` cuando basePath funcione) |
+| Health check ALB | Path `/v2`, matcher `200-399` cuando el contenedor esté arriba |
 | CORS S3 documentos | Orígenes: `https://app.nuwa.space`, `http://app.nuwa.space`, localhost |
 | Bucket documentos | `nuwa2-us-east-1-prod-client-documents` |
+
+**Arquitectura:** `ALB :3001` → **Next.js :3001** con `basePath: '/v2'`. **No** usar nginx proxy a `:3002` (eliminado en EC2).
 
 **No** apuntes el front directo a `http://3.92.3.96:3001` en el navegador ni en variables públicas. Usa siempre `https://app.nuwa.space/v2`.
 
@@ -239,6 +241,7 @@ aws elbv2 modify-target-group \
 ## 9. Qué NO hacer
 
 - No quitar `basePath: '/v2'` si el tráfico entra por `app.nuwa.space/v2`
+- No volver a poner nginx en `:3001` haciendo proxy a `:3002` — Next debe escuchar en **3001**
 - No cambiar DNS de `app.nuwa.space` (ya apunta al ALB correcto)
 - No usar `http://3.92.3.96:3001` como URL pública del producto
 - No commitear contraseñas ni tokens en `.env` del repo

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import calendar
 from typing import Any
 
 import psycopg.errors
@@ -652,15 +653,25 @@ def entities_stats_pg(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _next_run_at(frequency: str) -> datetime:
-    now = datetime.now(timezone.utc)
-    deltas = {
-        "weekly": timedelta(days=7),
-        "monthly": timedelta(days=30),
-        "semi-annual": timedelta(days=182),
-        "annual": timedelta(days=365),
-    }
-    return now + deltas.get(frequency, timedelta(days=7))
+def _add_months(dt: datetime, months: int) -> datetime:
+    month = dt.month - 1 + months
+    year = dt.year + month // 12
+    month = month % 12 + 1
+    day = min(dt.day, calendar.monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+
+
+def _next_run_at(frequency: str, from_dt: datetime | None = None) -> datetime:
+    now = from_dt or datetime.now(timezone.utc)
+    if frequency == "weekly":
+        return now + timedelta(days=7)
+    if frequency == "monthly":
+        return _add_months(now, 1)
+    if frequency == "semi-annual":
+        return _add_months(now, 6)
+    if frequency == "annual":
+        return _add_months(now, 12)
+    return now + timedelta(days=7)
 
 
 def entities_monitoring_upsert_pg(body: dict[str, Any]) -> dict[str, Any]:
@@ -675,11 +686,11 @@ def entities_monitoring_upsert_pg(body: dict[str, Any]) -> dict[str, Any]:
     if not enabled:
         sql = """
         UPDATE public.entity_monitoring SET is_enabled = false, updated_at = now()
-        WHERE entity_id = %s::uuid
+        WHERE entity_id = %s::uuid AND client_id = %s
         RETURNING id, frequency, sources, next_run_at
         """
         with _conn() as conn:
-            m = conn.execute(sql, [entity_id]).fetchone()
+            m = conn.execute(sql, [entity_id, client_id]).fetchone()
             conn.commit()
         if not m:
             return {"entityId": entity_id, "enabled": False}
@@ -707,7 +718,8 @@ def entities_monitoring_upsert_pg(body: dict[str, Any]) -> dict[str, Any]:
     ) VALUES (%s::uuid, %s, true, %s, %s, %s, %s)
     ON CONFLICT (entity_id) DO UPDATE SET
       is_enabled = true, frequency = EXCLUDED.frequency, sources = EXCLUDED.sources,
-      next_run_at = EXCLUDED.next_run_at, updated_at = now()
+      next_run_at = EXCLUDED.next_run_at, updated_at = now(),
+      client_id = EXCLUDED.client_id
     RETURNING id, frequency, sources, next_run_at
     """
     with _conn() as conn:
@@ -736,6 +748,7 @@ def entities_monitoring_list_pg(body: dict[str, Any]) -> dict[str, Any]:
     wsql = " AND ".join(where)
     sql = f"""
     SELECT e.*, m.id AS monitoring_id, m.frequency, m.sources, m.next_run_at,
+           m.last_run_at, m.last_run_status, m.is_enabled,
            (SELECT COUNT(*)::int FROM public.reports r
             WHERE r.entity_id = e.id AND r.status = 'active') AS report_count
     FROM public.entity_monitoring m
@@ -759,8 +772,316 @@ def entities_monitoring_list_pg(body: dict[str, Any]) -> dict[str, Any]:
         ent["frequency"] = r["frequency"]
         ent["sources"] = list(r["sources"] or [])
         ent["nextRunAt"] = _iso_z(r.get("next_run_at"))
+        ent["lastRunAt"] = _iso_z(r.get("last_run_at"))
+        ent["lastRunStatus"] = r.get("last_run_status")
+        ent["enabled"] = bool(r.get("is_enabled"))
         items.append(ent)
     return {"items": items, "total": total}
+
+
+def entities_monitoring_due_pg(body: dict[str, Any]) -> dict[str, Any]:
+    lim = max(1, min(int(body.get("limit") or 50), 200))
+    sql = """
+    SELECT
+      m.id AS monitoring_id,
+      m.entity_id,
+      m.client_id,
+      m.frequency,
+      m.sources,
+      m.next_run_at,
+      m.created_by_user_id,
+      e.name AS entity_name,
+      e.party_type,
+      e.last_report_folio,
+      e.rfc,
+      e.curp
+    FROM public.entity_monitoring m
+    JOIN public.entities e ON e.id = m.entity_id AND e.client_id = m.client_id
+    WHERE m.is_enabled = true
+      AND m.next_run_at IS NOT NULL
+      AND m.next_run_at <= now()
+      AND e.status <> 'deleted'
+    ORDER BY m.next_run_at ASC
+    LIMIT %s
+    """
+    with _conn() as conn:
+        rows = conn.execute(sql, [lim]).fetchall()
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "monitoringId": str(r["monitoring_id"]),
+                "entityId": str(r["entity_id"]),
+                "clientId": int(r["client_id"]),
+                "frequency": r["frequency"],
+                "sources": list(r["sources"] or []),
+                "nextRunAt": _iso_z(r.get("next_run_at")),
+                "createdByUserId": int(r["created_by_user_id"]),
+                "entityName": r.get("entity_name") or "",
+                "partyType": r.get("party_type"),
+                "lastReportFolio": r.get("last_report_folio"),
+                "rfc": r.get("rfc"),
+                "curp": r.get("curp"),
+            }
+        )
+    return {"items": items, "total": len(items)}
+
+
+def entities_monitoring_run_start_pg(body: dict[str, Any]) -> dict[str, Any]:
+    client_id = int(body["clientId"])
+    monitoring_id = str(body["monitoringId"])
+    sql = """
+    SELECT m.id, m.entity_id, m.client_id, m.is_enabled
+    FROM public.entity_monitoring m
+    WHERE m.id = %s::uuid AND m.client_id = %s
+    """
+    with _conn() as conn:
+        m = conn.execute(sql, [monitoring_id, client_id]).fetchone()
+        if not m:
+            raise SupabaseRestError(404, "monitoringId no encontrado para este clientId")
+        if not m["is_enabled"]:
+            raise SupabaseRestError(400, "monitoreo pausado")
+        ins = """
+        INSERT INTO public.entity_monitoring_runs (
+          monitoring_id, entity_id, client_id, status
+        ) VALUES (%s::uuid, %s::uuid, %s, 'running')
+        RETURNING id, started_at
+        """
+        run = conn.execute(
+            ins, [monitoring_id, str(m["entity_id"]), client_id]
+        ).fetchone()
+        conn.commit()
+    return {
+        "runId": str(run["id"]),
+        "monitoringId": monitoring_id,
+        "entityId": str(m["entity_id"]),
+        "clientId": client_id,
+        "status": "running",
+        "startedAt": _iso_z(run.get("started_at")),
+    }
+
+
+def entities_monitoring_run_finish_pg(body: dict[str, Any]) -> dict[str, Any]:
+    client_id = int(body["clientId"])
+    run_id = str(body["runId"])
+    status = str(body.get("status") or "").lower()
+    if status not in ("ok", "error", "skipped"):
+        raise SupabaseRestError(400, "status debe ser ok|error|skipped")
+    report_folio = body.get("reportFolio")
+    risk_before = body.get("riskBefore") or body.get("riskLevelBefore")
+    risk_after = body.get("riskAfter") or body.get("riskLevelAfter")
+    error_message = body.get("error") or body.get("errorMessage")
+
+    with _conn() as conn:
+        run = conn.execute(
+            """
+            SELECT r.*, m.frequency, m.is_enabled
+            FROM public.entity_monitoring_runs r
+            JOIN public.entity_monitoring m ON m.id = r.monitoring_id
+            WHERE r.id = %s::uuid AND r.client_id = %s
+            """,
+            [run_id, client_id],
+        ).fetchone()
+        if not run:
+            raise SupabaseRestError(404, "runId no encontrado para este clientId")
+
+        run_status = "ok" if status == "ok" else "error"
+        conn.execute(
+            """
+            UPDATE public.entity_monitoring_runs SET
+              finished_at = now(),
+              status = %s,
+              report_folio = COALESCE(%s, report_folio),
+              risk_level_before = COALESCE(%s, risk_level_before),
+              risk_level_after = COALESCE(%s, risk_level_after),
+              error_message = %s
+            WHERE id = %s::uuid AND client_id = %s
+            """,
+            [
+                run_status,
+                str(report_folio) if report_folio else None,
+                str(risk_before) if risk_before else None,
+                str(risk_after) if risk_after else None,
+                str(error_message) if error_message else None,
+                run_id,
+                client_id,
+            ],
+        )
+
+        now = datetime.now(timezone.utc)
+        if status == "ok":
+            nxt = _next_run_at(str(run["frequency"]), now)
+            last_status = "ok"
+            last_error = None
+        else:
+            # Retry next calendar day; do not advance full frequency on failure
+            nxt = now + timedelta(days=1)
+            last_status = "skipped" if status == "skipped" else "error"
+            last_error = str(error_message) if error_message else status
+
+        conn.execute(
+            """
+            UPDATE public.entity_monitoring SET
+              last_run_at = now(),
+              last_run_status = %s,
+              last_error = %s,
+              next_run_at = %s,
+              updated_at = now()
+            WHERE id = %s::uuid AND client_id = %s
+            """,
+            [last_status, last_error, nxt, str(run["monitoring_id"]), client_id],
+        )
+        conn.commit()
+
+    return {
+        "runId": run_id,
+        "monitoringId": str(run["monitoring_id"]),
+        "entityId": str(run["entity_id"]),
+        "clientId": client_id,
+        "status": run_status,
+        "nextRunAt": _iso_z(nxt),
+        "lastRunStatus": last_status,
+    }
+
+
+def entities_alerts_create_pg(body: dict[str, Any]) -> dict[str, Any]:
+    client_id = int(body["clientId"])
+    entity_id = str(body["entityId"])
+    alert_type = str(body.get("alertType") or body.get("type") or "")
+    if alert_type not in ("risk_change", "new_match", "new_media_mention", "status_change"):
+        raise SupabaseRestError(400, "alertType inválido")
+    severity = str(body.get("severity") or "medium")
+    if severity not in ("low", "medium", "high"):
+        raise SupabaseRestError(400, "severity inválida")
+    title = str(body.get("title") or "").strip()
+    if not title:
+        raise SupabaseRestError(400, "title es requerido")
+    description = body.get("description")
+    payload = body.get("payload") if isinstance(body.get("payload"), dict) else {}
+
+    ent = _get_entity_row(client_id, entity_id)
+    if not ent:
+        raise SupabaseRestError(403, "entityId no pertenece a este clientId")
+
+    sql = """
+    INSERT INTO public.entity_alerts (
+      client_id, entity_id, alert_type, severity, title, description, payload, status
+    ) VALUES (%s, %s::uuid, %s, %s, %s, %s, %s, 'new')
+    RETURNING id, created_at, status
+    """
+    with _conn() as conn:
+        row = conn.execute(
+            sql,
+            [
+                client_id,
+                entity_id,
+                alert_type,
+                severity,
+                title,
+                str(description) if description is not None else None,
+                Json(payload),
+            ],
+        ).fetchone()
+        conn.commit()
+    return {
+        "alertId": str(row["id"]),
+        "clientId": client_id,
+        "entityId": entity_id,
+        "alertType": alert_type,
+        "severity": severity,
+        "title": title,
+        "status": row["status"],
+        "createdAt": _iso_z(row.get("created_at")),
+    }
+
+
+def entities_alerts_list_pg(body: dict[str, Any]) -> dict[str, Any]:
+    client_id = int(body["clientId"])
+    lim = max(1, min(int(body.get("limit") or 100), 200))
+    off = max(0, int(body.get("offset") or 0))
+    status_filter = body.get("status")
+    params: list[Any] = [client_id]
+    where = ["a.client_id = %s"]
+    if status_filter:
+        where.append("a.status = %s")
+        params.append(str(status_filter))
+    wsql = " AND ".join(where)
+    sql = f"""
+    SELECT a.*, e.name AS entity_name, e.party_type
+    FROM public.entity_alerts a
+    JOIN public.entities e ON e.id = a.entity_id AND e.client_id = a.client_id
+    WHERE {wsql}
+    ORDER BY a.created_at DESC
+    LIMIT %s OFFSET %s
+    """
+    count_sql = f"""
+    SELECT COUNT(*)::int AS c FROM public.entity_alerts a WHERE {wsql}
+    """
+    agg_sql = """
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'new')::int AS new_count,
+      COUNT(*) FILTER (WHERE severity = 'high' AND status = 'new')::int AS high_new,
+      COUNT(*) FILTER (WHERE severity = 'medium' AND status = 'new')::int AS medium_new,
+      COUNT(*)::int AS total_all
+    FROM public.entity_alerts
+    WHERE client_id = %s
+    """
+    with _conn() as conn:
+        total = int(conn.execute(count_sql, params).fetchone()["c"])
+        rows = conn.execute(sql, [*params, lim, off]).fetchall()
+        agg = conn.execute(agg_sql, [client_id]).fetchone()
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "alertId": str(r["id"]),
+                "clientId": int(r["client_id"]),
+                "entityId": str(r["entity_id"]),
+                "entityName": r.get("entity_name") or "",
+                "partyType": r.get("party_type"),
+                "alertType": r["alert_type"],
+                "severity": r["severity"],
+                "title": r["title"],
+                "description": r.get("description"),
+                "payload": r.get("payload") if isinstance(r.get("payload"), dict) else {},
+                "status": r["status"],
+                "createdAt": _iso_z(r.get("created_at")),
+            }
+        )
+    return {
+        "items": items,
+        "total": total,
+        "aggregates": {
+            "newCount": int(agg["new_count"] or 0),
+            "highNew": int(agg["high_new"] or 0),
+            "mediumNew": int(agg["medium_new"] or 0),
+            "totalAll": int(agg["total_all"] or 0),
+        },
+    }
+
+
+def entities_alerts_ack_pg(body: dict[str, Any]) -> dict[str, Any]:
+    client_id = int(body["clientId"])
+    alert_id = str(body["alertId"])
+    status = str(body.get("status") or "").lower()
+    if status not in ("reviewed", "dismissed", "escalated"):
+        raise SupabaseRestError(400, "status debe ser reviewed|dismissed|escalated")
+    sql = """
+    UPDATE public.entity_alerts SET status = %s
+    WHERE id = %s::uuid AND client_id = %s
+    RETURNING id, status, entity_id
+    """
+    with _conn() as conn:
+        row = conn.execute(sql, [status, alert_id, client_id]).fetchone()
+        conn.commit()
+    if not row:
+        raise SupabaseRestError(404, "alertId no encontrado para este clientId")
+    return {
+        "alertId": str(row["id"]),
+        "clientId": client_id,
+        "entityId": str(row["entity_id"]),
+        "status": row["status"],
+    }
 
 
 def enrich_entity_from_party_pg(

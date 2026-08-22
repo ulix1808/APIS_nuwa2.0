@@ -5,6 +5,8 @@ from pathlib import Path
 from aws_cdk import ArnFormat, CfnOutput, Duration, RemovalPolicy, SecretValue, Stack, Tags, Token
 from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_events as events
+from aws_cdk import aws_events_targets as targets
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
@@ -546,6 +548,13 @@ class NuwaApiStack(Stack):
         emon = entities.add_resource("monitoring")
         emon.add_resource("upsert").add_method("POST", entities_integration, api_key_required=False)
         emon.add_resource("list").add_method("POST", entities_integration, api_key_required=False)
+        emon.add_resource("due").add_method("POST", entities_integration, api_key_required=False)
+        emon.add_resource("run-start").add_method("POST", entities_integration, api_key_required=False)
+        emon.add_resource("run-finish").add_method("POST", entities_integration, api_key_required=False)
+        ealerts = entities.add_resource("alerts")
+        ealerts.add_resource("list").add_method("POST", entities_integration, api_key_required=False)
+        ealerts.add_resource("ack").add_method("POST", entities_integration, api_key_required=False)
+        ealerts.add_resource("create").add_method("POST", entities_integration, api_key_required=False)
 
         clients = v1.add_resource("clients")
         clients.add_resource("storage").add_resource("init").add_method(
@@ -623,6 +632,58 @@ class NuwaApiStack(Stack):
             )
         )
 
+        # Monitoreo continuo: secreto compartido entities + tick Lambda + BFF
+        monitoring_secret_name = f"{TAG_VALUE_PROJECT}/{env}/monitoring-worker"
+        monitoring_worker_secret = secretsmanager.Secret(
+            self,
+            "MonitoringWorkerSecret",
+            secret_name=monitoring_secret_name,
+            description="MONITORING_WORKER_SECRET para due/run/alerts y BFF enqueue-rescreen",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                password_length=48,
+                exclude_punctuation=True,
+            ),
+            removal_policy=RemovalPolicy.RETAIN,
+        )
+        entities_fn.add_environment(
+            "MONITORING_WORKER_SECRET",
+            monitoring_worker_secret.secret_value.unsafe_unwrap(),
+        )
+        monitoring_worker_secret.grant_read(entities_fn)
+
+        monitoring_bff_url = (
+            self.node.try_get_context("monitoringBffUrl")
+            or "https://app.nuwa.space/v2"
+        )
+        due_limit = str(self.node.try_get_context("monitoringDueLimit") or "50")
+        monitoring_tick_fn = lambda_.Function(
+            self,
+            "MonitoringDueTickLambda",
+            function_name=f"{prefix}-lambda-monitoring-due-tick",
+            handler="handler_monitoring_tick.handler",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            code=lambda_code,
+            timeout=Duration.seconds(90),
+            memory_size=256,
+            environment={
+                "NUWA_API_BASE": api.url.rstrip("/"),
+                "MONITORING_BFF_URL": str(monitoring_bff_url).rstrip("/"),
+                "MONITORING_WORKER_SECRET": monitoring_worker_secret.secret_value.unsafe_unwrap(),
+                "MONITORING_DUE_LIMIT": due_limit,
+            },
+            log_retention=logs.RetentionDays.TWO_WEEKS,
+        )
+        monitoring_worker_secret.grant_read(monitoring_tick_fn)
+
+        # ~02:00 America/Mexico_City en horario estándar (UTC-6) → 08:00 UTC
+        events.Rule(
+            self,
+            "MonitoringDueTickSchedule",
+            rule_name=f"{prefix}-monitoring-due-tick",
+            description="Monitoreo continuo: due → BFF enqueue (madrugada MX ≈ 02:00 CST)",
+            schedule=events.Schedule.cron(minute="0", hour="8"),
+        ).add_target(targets.LambdaFunction(monitoring_tick_fn))
+
         for construct in (
             sources_fn,
             chunks_fn,
@@ -632,6 +693,8 @@ class NuwaApiStack(Stack):
             documents_fn,
             admin_fn,
             auth_fn,
+            monitoring_tick_fn,
+            monitoring_worker_secret,
             api,
             plan,
             api_key,
@@ -698,6 +761,19 @@ class NuwaApiStack(Stack):
             "OpenApiDocsWebsiteUrl",
             value=docs_bucket.bucket_website_url,
             description="Sitio estático público con Swagger UI + openapi.yaml (S3 website endpoint, HTTP).",
+        )
+
+        CfnOutput(
+            self,
+            "MonitoringWorkerSecretArn",
+            value=monitoring_worker_secret.secret_arn,
+            description="ARN del secreto MONITORING_WORKER_SECRET (due/run/alerts + BFF enqueue)",
+        )
+        CfnOutput(
+            self,
+            "MonitoringDueTickFunctionName",
+            value=monitoring_tick_fn.function_name,
+            description="Lambda monitoring-due-tick (EventBridge ~02:00 MX / 08:00 UTC)",
         )
 
         CfnOutput(

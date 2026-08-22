@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import hmac
 import json
+import os
 from typing import Any
 
 from nuwa_api_auth import effective_tenant_scope, jwt_allows_client, jwt_matches_actor_body, require_jwt
@@ -31,6 +33,29 @@ def _body(event: dict[str, Any]) -> dict[str, Any]:
         return {}
 
 
+def _headers_lower(event: dict[str, Any]) -> dict[str, str]:
+    raw = event.get("headers") or {}
+    return {str(k).lower(): str(v) for k, v in raw.items()}
+
+
+def monitoring_worker_secret_ok(event: dict[str, Any]) -> bool:
+    expected = (os.environ.get("MONITORING_WORKER_SECRET") or "").strip()
+    if not expected:
+        return False
+    headers = _headers_lower(event)
+    got = (headers.get("x-monitoring-worker-secret") or "").strip()
+    if not got:
+        auth = headers.get("authorization") or ""
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
+            # Only treat as worker secret if it matches (not a JWT)
+            if token and "." not in token:
+                got = token
+    if not got:
+        return False
+    return hmac.compare_digest(got, expected)
+
+
 def _auth(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any] | str:
     claims = require_jwt(event)
     if isinstance(claims, str):
@@ -47,6 +72,22 @@ def _auth(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any] | str:
     if bound is not None and cid != bound:
         return "FORBIDDEN_CLIENT"
     return claims
+
+
+def _auth_user_or_worker(
+    body: dict[str, Any],
+    event: dict[str, Any],
+    *,
+    require_client_id: bool = True,
+) -> dict[str, Any] | str:
+    if monitoring_worker_secret_ok(event):
+        if require_client_id:
+            try:
+                int(body["clientId"])
+            except (KeyError, TypeError, ValueError):
+                return "BAD_CLIENT"
+        return {"role": "monitoring_worker", "worker": True}
+    return _auth(body, event)
 
 
 def _require_pg() -> None:
@@ -76,7 +117,25 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     try:
         body = _body(event)
-        auth = _auth(body, event)
+
+        worker_only_paths = (
+            "/entities/monitoring/due",
+        )
+        worker_or_user_paths = (
+            "/entities/monitoring/run-start",
+            "/entities/monitoring/run-finish",
+            "/entities/alerts/create",
+        )
+
+        if any(path.endswith(p) for p in worker_only_paths):
+            if not monitoring_worker_secret_ok(event):
+                return _resp(401, {"code": "UNAUTHORIZED", "message": "Se requiere x-monitoring-worker-secret"})
+            auth: dict[str, Any] | str = {"role": "monitoring_worker", "worker": True}
+        elif any(path.endswith(p) for p in worker_or_user_paths):
+            auth = _auth_user_or_worker(body, event, require_client_id=True)
+        else:
+            auth = _auth(body, event)
+
         if auth == "FORBIDDEN_ACTOR":
             return _resp(403, {"code": "FORBIDDEN", "message": "clientId y userId deben coincidir con el JWT."})
         if auth == "FORBIDDEN_CLIENT":
@@ -87,12 +146,18 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _resp(401, {"code": "UNAUTHORIZED", "message": auth})
 
         from nuwa_entities_pg import (
+            entities_alerts_ack_pg,
+            entities_alerts_create_pg,
+            entities_alerts_list_pg,
             entities_create_pg,
             entities_delete_pg,
             entities_get_pg,
             entities_list_pg,
             entities_match_pg,
+            entities_monitoring_due_pg,
             entities_monitoring_list_pg,
+            entities_monitoring_run_finish_pg,
+            entities_monitoring_run_start_pg,
             entities_monitoring_upsert_pg,
             entities_stats_pg,
             entities_update_pg,
@@ -116,6 +181,18 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _resp(200, entities_monitoring_upsert_pg(body))
         if path.endswith("/entities/monitoring/list"):
             return _resp(200, entities_monitoring_list_pg(body))
+        if path.endswith("/entities/monitoring/due"):
+            return _resp(200, entities_monitoring_due_pg(body))
+        if path.endswith("/entities/monitoring/run-start"):
+            return _resp(200, entities_monitoring_run_start_pg(body))
+        if path.endswith("/entities/monitoring/run-finish"):
+            return _resp(200, entities_monitoring_run_finish_pg(body))
+        if path.endswith("/entities/alerts/list"):
+            return _resp(200, entities_alerts_list_pg(body))
+        if path.endswith("/entities/alerts/ack"):
+            return _resp(200, entities_alerts_ack_pg(body))
+        if path.endswith("/entities/alerts/create"):
+            return _resp(201, entities_alerts_create_pg(body))
 
         return _resp(404, {"message": "Ruta no encontrada", "method": method, "path": path})
     except SupabaseRestError as e:
