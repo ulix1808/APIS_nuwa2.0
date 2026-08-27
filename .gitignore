@@ -15,3 +15,6 @@ scripts/pg.env
 scripts/cdk.deploy.env
 cdk.context.json
 .DS_Store
+
+# local DB dumps
+backups/

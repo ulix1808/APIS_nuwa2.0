@@ -310,6 +310,13 @@ class NuwaApiStack(Stack):
             handler="handler_search.handler",
             **lambda_kwargs,
         )
+        legal_fn = lambda_.Function(
+            self,
+            "LegalLambda",
+            function_name=f"{prefix}-lambda-legal",
+            handler="handler_legal.handler",
+            **lambda_kwargs,
+        )
         reports_fn = lambda_.Function(
             self,
             "ReportsLambda",
@@ -346,7 +353,7 @@ class NuwaApiStack(Stack):
             **lambda_kwargs,
         )
 
-        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, legal_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
             url_param.grant_read(fn)
             secret.grant_read(fn)
             db_secret.grant_read(fn)
@@ -391,7 +398,7 @@ class NuwaApiStack(Stack):
                 "StringLike": {"secretsmanager:SecretId": app_crypto_secret_id_patterns}
             },
         )
-        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, legal_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
             fn.add_to_role_policy(app_crypto_iam_fix)
 
         # ARN explícito + comodín de sufijo (Secrets Manager añade 6 chars). grant_read / StringLike a veces
@@ -414,7 +421,7 @@ class NuwaApiStack(Stack):
                 _app_crypto_arn_wildcard,
             ],
         )
-        for fn in (sources_fn, chunks_fn, search_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, legal_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
             fn.add_to_role_policy(app_crypto_resource_allow)
 
         api = apigw.RestApi(
@@ -536,6 +543,13 @@ class NuwaApiStack(Stack):
         )
 
         v1.add_resource("search").add_method("POST", search_integration, api_key_required=False)
+
+        legal_integration = apigw.LambdaIntegration(legal_fn)
+        legal = v1.add_resource("legal")
+        legal_cjf = legal.add_resource("cjf")
+        legal_cjf.add_resource("search").add_method("POST", legal_integration, api_key_required=False)
+        legal_cjf.add_resource("ingest").add_method("POST", legal_integration, api_key_required=False)
+        legal_cjf.add_resource("stats").add_method("POST", legal_integration, api_key_required=False)
 
         entities = v1.add_resource("entities")
         entities.add_resource("match").add_method("POST", entities_integration, api_key_required=False)
@@ -688,6 +702,7 @@ class NuwaApiStack(Stack):
             sources_fn,
             chunks_fn,
             search_fn,
+            legal_fn,
             reports_fn,
             entities_fn,
             documents_fn,

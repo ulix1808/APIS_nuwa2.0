@@ -15,6 +15,9 @@ info:
 
     **Search / reportes:** el `clientId` del body o query debe estar permitido por el token (`cid` o `super_admin`).
 
+    **Legal (CJF/SISE):** `POST /v1/legal/cjf/search|ingest|stats` — menciones judiciales informativas
+    (`cjf_mentions` / `cjf_documents`). No afecta riesgo de listas del catálogo. Ver `docs/CJF_LEGAL_SOURCE.md`.
+
     **Entidades (PF/PM):** registro en entities por tenant; deduplicación en POST /v1/entities/match (ventana 30 días);
     cada consulta guardada en POST /v1/reports/save con entityId. Screening múltiple: un entityId por sujeto,
     parentEntityId si hay empresa padre, correlación por groupId + groupName (sin empresa padre) o solo parentEntityId (con empresa).
@@ -47,6 +50,10 @@ tags:
     description: Ingest y reemplazo de chunks (`risk_entity_chunks`)
   - name: Search
     description: Búsqueda difusa / RFC (función PostgreSQL `search_risk_entities` + catálogo)
+  - name: Legal
+    description: |
+      Fuente Legal CJF/SISE (informativa). Tablas `cjf_documents` / `cjf_mentions`.
+      No usa `risk_entity_chunks` ni suma riesgo de listas. Ver `docs/CJF_LEGAL_SOURCE.md`.
   - name: Reports
     description: Reportes post-búsqueda (tabla `reports`, JSON extensible)
   - name: Entities
@@ -471,6 +478,124 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/ServerError"
+
+  /v1/legal/cjf/search:
+    post:
+      tags: [Legal]
+      operationId: legalCjfSearch
+      summary: Búsqueda en fuente Legal CJF/SISE (informativa)
+      description: |
+        Busca menciones de personas/empresas en documentos judiciales CJF normalizados
+        (`cjf_mentions` / `cjf_documents`). **No** usa `risk_entity_chunks` ni afecta
+        el riesgo de listas del catálogo. Respuesta con `informational: true` y `category: legal`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientId, query]
+              properties:
+                clientId: { type: integer }
+                query: { type: string, minLength: 2 }
+                entityType:
+                  type: string
+                  description: Filtra tipo de mención (individual→persona, organization→empresa)
+                  enum: [individual, organization]
+                tipoFilter:
+                  type: string
+                  description: Override explícito (`persona` | `empresa`)
+                limit: { type: integer, default: 25, maximum: 100 }
+            example:
+              clientId: 1
+              query: "hsbc mexico"
+              entityType: organization
+              limit: 25
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegalCjfSearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServerError"
+
+  /v1/legal/cjf/ingest:
+    post:
+      tags: [Legal]
+      operationId: legalCjfIngest
+      summary: Upsert batch de documentos CJF compact JSON
+      description: |
+        Upsert de `cjf_documents` y reemplazo de `cjf_mentions` por `documento_id`.
+        Body: lista de JSON compactos CJF (`documents` o `items`).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientId, documents]
+              properties:
+                clientId: { type: integer }
+                documents:
+                  type: array
+                  items: { type: object }
+                items:
+                  type: array
+                  items: { type: object }
+                  description: Alias de `documents`
+      responses:
+        "200":
+          description: OK — `{ success, documentsUpserted, mentionsInserted, skipped }`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  documentsUpserted: { type: integer }
+                  mentionsInserted: { type: integer }
+                  skipped: { type: integer }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/legal/cjf/stats:
+    post:
+      tags: [Legal]
+      operationId: legalCjfStats
+      summary: Conteos de documentos y menciones CJF
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientId: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  documentCount: { type: integer }
+                  mentionCount: { type: integer }
 
   /v1/entities/match:
     post:
@@ -2074,6 +2199,43 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SearchResultItem"
+
+    LegalCjfHit:
+      type: object
+      description: Mención CJF/SISE (informativa; no suma riesgo de listas)
+      properties:
+        id: { type: string }
+        documentoId: { type: string }
+        nombre: { type: string }
+        tipo: { type: string, nullable: true }
+        rol: { type: string, nullable: true }
+        extraccionFuente: { type: string, nullable: true }
+        matchScore: { type: integer, minimum: 0, maximum: 100 }
+        tema: { type: string, nullable: true }
+        sintesis: { type: string, nullable: true }
+        numeroExpediente: { type: string, nullable: true }
+        materia: { type: string, nullable: true }
+        fechaSentencia: { type: string, nullable: true }
+        tipoAsunto: { type: string, nullable: true }
+        documentoUrlSise: { type: string, nullable: true }
+        informational: { type: boolean, enum: [true] }
+        category: { type: string, enum: [legal] }
+        matchedList: { type: string, example: "CJF / SISE" }
+        sourceKind: { type: string, enum: [cjf_legal] }
+
+    LegalCjfSearchResponse:
+      type: object
+      required: [success, hits, status, source, category]
+      properties:
+        success: { type: boolean }
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/LegalCjfHit"
+        status: { type: string, enum: [ok, empty] }
+        source: { type: string, example: postgres }
+        category: { type: string, enum: [legal] }
+        matchedList: { type: string, example: "CJF / SISE" }
 
     ReportRecord:
       type: object
