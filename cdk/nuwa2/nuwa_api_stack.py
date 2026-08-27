@@ -166,10 +166,13 @@ class NuwaApiStack(Stack):
         lambda_env["NUWA_APP_CRYPTO_SECRET_ARN"] = app_crypto_secret.secret_arn
         lambda_env["NUWA_APP_CRYPTO_SECRET_NAME"] = app_crypto_name
 
+        # API Gateway REST: cuota cuenta = 70s (default AWS 29s). Alinear Lambda + integración.
+        api_integration_timeout = Duration.seconds(70)
+
         lambda_kwargs: dict = dict(
             runtime=lambda_.Runtime.PYTHON_3_12,
             code=lambda_code,
-            timeout=Duration.seconds(29),
+            timeout=api_integration_timeout,
             memory_size=256,
             environment=lambda_env,
             log_retention=logs.RetentionDays.TWO_WEEKS,
@@ -513,14 +516,14 @@ class NuwaApiStack(Stack):
         client_documents_bucket.grant_read_write(documents_fn)
         client_documents_bucket.grant_read_write(admin_fn)
 
-        sources_integration = apigw.LambdaIntegration(sources_fn)
-        chunks_integration = apigw.LambdaIntegration(chunks_fn)
-        search_integration = apigw.LambdaIntegration(search_fn)
-        reports_integration = apigw.LambdaIntegration(reports_fn)
-        entities_integration = apigw.LambdaIntegration(entities_fn)
-        documents_integration = apigw.LambdaIntegration(documents_fn)
-        admin_integration = apigw.LambdaIntegration(admin_fn)
-        auth_integration = apigw.LambdaIntegration(auth_fn)
+        sources_integration = apigw.LambdaIntegration(sources_fn, timeout=api_integration_timeout)
+        chunks_integration = apigw.LambdaIntegration(chunks_fn, timeout=api_integration_timeout)
+        search_integration = apigw.LambdaIntegration(search_fn, timeout=api_integration_timeout)
+        reports_integration = apigw.LambdaIntegration(reports_fn, timeout=api_integration_timeout)
+        entities_integration = apigw.LambdaIntegration(entities_fn, timeout=api_integration_timeout)
+        documents_integration = apigw.LambdaIntegration(documents_fn, timeout=api_integration_timeout)
+        admin_integration = apigw.LambdaIntegration(admin_fn, timeout=api_integration_timeout)
+        auth_integration = apigw.LambdaIntegration(auth_fn, timeout=api_integration_timeout)
 
         v1 = api.root.add_resource("v1")
         v1.add_resource("auth").add_resource("login").add_method(
@@ -544,7 +547,7 @@ class NuwaApiStack(Stack):
 
         v1.add_resource("search").add_method("POST", search_integration, api_key_required=False)
 
-        legal_integration = apigw.LambdaIntegration(legal_fn)
+        legal_integration = apigw.LambdaIntegration(legal_fn, timeout=api_integration_timeout)
         legal = v1.add_resource("legal")
         legal_cjf = legal.add_resource("cjf")
         legal_cjf.add_resource("search").add_method("POST", legal_integration, api_key_required=False)
