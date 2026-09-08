@@ -119,7 +119,7 @@ Entidades por tenant con `party_type` (`individual` | `organization`), nombres d
 | `POST /v1/entities/delete` | Soft delete (`status=deleted`) |
 | `POST /v1/entities/stats` | Agregados para widgets |
 | `POST /v1/entities/monitoring/upsert` | Config monitoreo continuo |
-| `POST /v1/entities/monitoring/list` | Listado con próxima ejecución |
+| `POST /v1/entities/monitoring/list` | Listado con próxima ejecución, `lastRunStatus`, `lastError` |
 
 ### Código
 
@@ -135,6 +135,8 @@ Al guardar un reporte con `entityId`, `handler_reports` llama **`touch_entity_af
 
 - Actualiza `last_screening_at`, `last_report_folio`, `risk_level`.
 - Si la entidad era **`document_mention`**, la promueve a **`screening`**.
+
+En monitoreo automático, **`POST /v1/entities/monitoring/run-finish`** con `status=ok` y `reportFolio` invoca la misma función (consolida riesgo y expone `lastReportFolio` en list/get de entidades).
 
 Migración base: `supabase/migrations/20260516120000_entities_monitoring.sql`.
 

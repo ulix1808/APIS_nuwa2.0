@@ -3358,6 +3358,10 @@ components:
           type: string
           format: date-time
           nullable: true
+        lastReportFolio:
+          type: string
+          nullable: true
+          description: Folio del último reporte de screening (manual o monitoreo automático)
         relationshipRole:
           type: string
           nullable: true
@@ -3742,6 +3746,20 @@ components:
                     type: string
                     format: date-time
                     nullable: true
+                  lastRunAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  lastRunStatus:
+                    type: string
+                    nullable: true
+                    description: ok | error | skipped (último ciclo de monitoreo)
+                  lastError:
+                    type: string
+                    nullable: true
+                    description: Mensaje del último fallo o skipped (null si lastRunStatus=ok)
+                  enabled:
+                    type: boolean
         total:
           type: integer
 

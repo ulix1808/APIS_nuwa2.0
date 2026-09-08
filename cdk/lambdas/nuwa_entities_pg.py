@@ -98,6 +98,7 @@ def _entity_api(row: dict[str, Any], *, report_count: int | None = None) -> dict
         "parentEntityId": str(row["parent_entity_id"]) if row.get("parent_entity_id") else None,
         "reportCount": report_count if report_count is not None else int(row.get("report_count") or 0),
         "lastScreeningAt": _iso_z(row.get("last_screening_at")),
+        "lastReportFolio": row.get("last_report_folio"),
         "createdAt": _iso_z(row.get("created_at")),
         "updatedAt": _iso_z(row.get("updated_at")),
         "metadata": meta,
@@ -748,7 +749,7 @@ def entities_monitoring_list_pg(body: dict[str, Any]) -> dict[str, Any]:
     wsql = " AND ".join(where)
     sql = f"""
     SELECT e.*, m.id AS monitoring_id, m.frequency, m.sources, m.next_run_at,
-           m.last_run_at, m.last_run_status, m.is_enabled,
+           m.last_run_at, m.last_run_status, m.last_error, m.is_enabled,
            (SELECT COUNT(*)::int FROM public.reports r
             WHERE r.entity_id = e.id AND r.status = 'active') AS report_count
     FROM public.entity_monitoring m
@@ -774,6 +775,7 @@ def entities_monitoring_list_pg(body: dict[str, Any]) -> dict[str, Any]:
         ent["nextRunAt"] = _iso_z(r.get("next_run_at"))
         ent["lastRunAt"] = _iso_z(r.get("last_run_at"))
         ent["lastRunStatus"] = r.get("last_run_status")
+        ent["lastError"] = r.get("last_error")
         ent["enabled"] = bool(r.get("is_enabled"))
         items.append(ent)
     return {"items": items, "total": total}
@@ -931,6 +933,20 @@ def entities_monitoring_run_finish_pg(body: dict[str, Any]) -> dict[str, Any]:
             """,
             [last_status, last_error, nxt, str(run["monitoring_id"]), client_id],
         )
+        if status == "ok" and report_folio:
+            nivel_num = None
+            if risk_after is not None:
+                try:
+                    nivel_num = int(risk_after)
+                except (TypeError, ValueError):
+                    nivel_num = None
+            touch_entity_after_report_pg(
+                entity_id=str(run["entity_id"]),
+                client_id=client_id,
+                folio=str(report_folio),
+                nivel_riesgo=None,
+                nivel_numerico=nivel_num,
+            )
         conn.commit()
 
     return {

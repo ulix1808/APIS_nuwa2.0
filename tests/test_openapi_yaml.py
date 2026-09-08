@@ -14,6 +14,12 @@ def test_openapi_parses() -> None:
     assert "/v1/clients/list" in data["paths"]
     assert "/v1/admin/users/invite" in data["paths"]
     assert "/v1/admin/users/reset-password" in data["paths"]
+    entity = data["components"]["schemas"]["EntitySummary"]["properties"]
+    assert "lastReportFolio" in entity
+    monitoring_list = (
+        data["components"]["schemas"]["EntityMonitoringListResponse"]["properties"]["items"]["items"]["allOf"][1]["properties"]
+    )
+    assert "lastError" in monitoring_list
     assert "/v1/source-category-id/create" in data["paths"]
     assert "/v1/source-category-id/list" in data["paths"]
     assert "/v1/source-category-id/{id}" in data["paths"]
