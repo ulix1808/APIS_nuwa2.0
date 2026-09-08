@@ -1181,6 +1181,10 @@ paths:
         (por `entity_id`, `parent_entity_id` o nombre huérfano en `entidad`).
 
         **RBAC opcional:** `actorUserId` y `actorClientId` — si se envían, los resultados se filtran según rol en `nuwa_users`.
+
+        **Auth worker (monitoreo continuo):** header `x-monitoring-worker-secret` (o Bearer con el mismo valor, sin JWT).
+        Solo consulta **por folio**: requiere `clientId` y `folio` (no listados paginados). Valida que el reporte pertenezca al tenant.
+        Params pueden ir en query o en body JSON en `POST`.
       security:
         - BearerAuth: []
       parameters:
@@ -1326,8 +1330,10 @@ paths:
       tags: [Reports]
       summary: Igual que GET (listar o consultar por query string)
       description: |
-        Mismos query params que `GET /v1/reports/get`. Body ignorado (puede enviarse `{}`).
+        Mismos query params que `GET /v1/reports/get`. Body puede incluir `clientId`, `userId`, `folio`, `includePayload`, etc.
         Útil cuando un proxy o cliente no reenvía `Authorization` en `GET` pero sí en `POST`.
+
+        **Auth worker:** `x-monitoring-worker-secret` — solo `clientId` + `folio` (sin listados masivos).
       security:
         - BearerAuth: []
       parameters:
@@ -1391,6 +1397,8 @@ paths:
 
         Campos de grupo en raíz y en `report.metadatos`: `groupId`, `groupName`, `groupRole`, `parentEntityId`, `relationshipRole`.
         Columnas SQL: `entity_id`, `parent_entity_id`, `group_id`, `group_name`, `group_role`.
+
+        **Auth worker (monitoreo continuo):** `x-monitoring-worker-secret`. Requiere `entityId` (raíz o `report.metadatos`) y valida que la entidad pertenezca a `clientId`.
       security:
         - BearerAuth: []
       requestBody:
@@ -1484,6 +1492,9 @@ paths:
     post:
       tags: [Reports]
       summary: Actualizar reporte (reemplazo completo del JSON del reporte)
+      description: |
+        JWT de usuario o **`x-monitoring-worker-secret`** (monitoreo continuo).
+        Con worker auth, `clientId` en body es obligatorio y debe coincidir con el reporte (`folio`).
       security:
         - BearerAuth: []
       requestBody:

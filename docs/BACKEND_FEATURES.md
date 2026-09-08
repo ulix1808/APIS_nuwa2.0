@@ -262,6 +262,14 @@ Entidades `document_mention` **no aparecen** en `entities/list` salvo `includeDo
 
 `POST /v1/reports/save` acepta **`entityId`** (UUID). Actualiza historial de la entidad y consolida riesgo. Ver `touch_entity_after_report_pg` en `nuwa_entities_pg.py`.
 
+**Monitoreo continuo (worker):** el scheduler/BFF puede llamar reportes con `x-monitoring-worker-secret` (`nuwa_monitoring_worker.py`):
+
+| Ruta | Worker auth |
+|------|-------------|
+| `GET/POST /v1/reports/get` | Solo `clientId` + `folio` (un reporte; sin listados) |
+| `POST /v1/reports/save` | `entityId` obligatorio; debe pertenecer al `clientId` |
+| `POST /v1/reports/update` | `clientId` obligatorio; ownership del `folio` |
+
 ---
 
 ## 5. Infraestructura CDK (prod)

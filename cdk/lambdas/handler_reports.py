@@ -23,6 +23,7 @@ from nuwa_rbac import can_read_report
 from nuwa_supabase import fetch_user_with_role, rest_json
 from nuwa_api_auth import effective_tenant_scope, jwt_allows_client, require_jwt
 from nuwa_obs_log import log_handler_enter, log_phase
+from nuwa_monitoring_worker import monitoring_worker_claims, monitoring_worker_secret_ok
 
 from report_helpers import (
     db_row_to_api_summary,
@@ -78,6 +79,31 @@ def _truthy(q: dict[str, str], key: str) -> bool:
     return (q.get(key) or "").lower() in ("1", "true", "yes")
 
 
+def _params_from_event(event: dict[str, Any]) -> dict[str, str]:
+    q = _query_params(event)
+    body = _parse_json_body(event)
+    merged = dict(q)
+    for key in ("clientId", "userId", "folio", "includePayload", "nextKey", "limit", "actorUserId", "actorClientId"):
+        if key in body and body[key] is not None and str(body[key]).strip() != "":
+            merged[key] = str(body[key])
+    return merged
+
+
+def _entity_belongs_to_client(client_id: int, entity_id: str) -> bool:
+    if not entity_id:
+        return False
+    if is_database_mode():
+        from nuwa_entities_pg import _get_entity_row
+
+        return _get_entity_row(client_id, str(entity_id)) is not None
+    rows = rest_json(
+        "GET",
+        "entities",
+        query=f"id=eq.{entity_id}&client_id=eq.{client_id}&select=id&status=neq.deleted&limit=1",
+    )
+    return bool(rows)
+
+
 def _apply_rbac(actor: dict[str, Any] | None, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not actor:
         return rows
@@ -95,7 +121,7 @@ def _select_cols_for_list() -> str:
 
 
 def handle_get(event: dict[str, Any]) -> dict[str, Any]:
-    q = _query_params(event)
+    q = _params_from_event(event)
     client_id = _int(q, "clientId")
     user_id = _int(q, "userId")
     folio = (q.get("folio") or "").strip()
@@ -105,32 +131,44 @@ def handle_get(event: dict[str, Any]) -> dict[str, Any]:
     lim = max(1, min(lim, 100))
     offset = decode_next_key(next_tok) or 0
 
-    jwt_msg = require_jwt(event)
-    if isinstance(jwt_msg, str):
-        return _resp(401, {"code": "UNAUTHORIZED", "message": jwt_msg})
-    bound = effective_tenant_scope(jwt_msg)
-    if bound is not None:
-        if client_id is not None and client_id != bound:
+    worker = monitoring_worker_secret_ok(event)
+    if worker:
+        if client_id is None or not folio:
             return _resp(
-                403,
-                {"code": "FORBIDDEN", "message": "clientId no autorizado para este token."},
+                400,
+                {
+                    "code": "BAD_REQUEST",
+                    "message": "Worker auth requiere clientId y folio (sin listados masivos).",
+                },
             )
-        if user_id is not None:
-            urows = rest_json(
-                "GET",
-                "nuwa_users",
-                query=f"id=eq.{user_id}&select=client_id&limit=1",
-            )
-            if not urows or int(urows[0]["client_id"]) != bound:
+        bound = None
+    else:
+        jwt_msg = require_jwt(event)
+        if isinstance(jwt_msg, str):
+            return _resp(401, {"code": "UNAUTHORIZED", "message": jwt_msg})
+        bound = effective_tenant_scope(jwt_msg)
+        if bound is not None:
+            if client_id is not None and client_id != bound:
                 return _resp(
                     403,
-                    {"code": "FORBIDDEN", "message": "userId no pertenece al tenant del token."},
+                    {"code": "FORBIDDEN", "message": "clientId no autorizado para este token."},
                 )
+            if user_id is not None:
+                urows = rest_json(
+                    "GET",
+                    "nuwa_users",
+                    query=f"id=eq.{user_id}&select=client_id&limit=1",
+                )
+                if not urows or int(urows[0]["client_id"]) != bound:
+                    return _resp(
+                        403,
+                        {"code": "FORBIDDEN", "message": "userId no pertenece al tenant del token."},
+                    )
 
     actor_user = _int(q, "actorUserId")
     actor_client = _int(q, "actorClientId")
     actor: dict[str, Any] | None = None
-    if actor_user is not None:
+    if not worker and actor_user is not None:
         actor = fetch_user_with_role(user_id=actor_user)
         if not actor:
             return _resp(403, {"message": "actorUserId no válido o inactivo"})
@@ -163,6 +201,8 @@ def handle_get(event: dict[str, Any]) -> dict[str, Any]:
             if not rows:
                 return _resp(404, {"message": f"No se encontró reporte con folio {folio}"})
             row = rows[0]
+            if worker and int(row["client_id"]) != client_id:
+                return _resp(403, {"code": "FORBIDDEN", "message": "Reporte no pertenece a clientId."})
             if include_payload:
                 full = db_row_to_api_summary(row)
                 full["payload"] = row.get("report_json")
@@ -233,16 +273,32 @@ def handle_save(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
     user_id = int(user_id)
     folio = str(reporte.get("folio"))
 
-    claims = require_jwt(event)
-    if isinstance(claims, str):
-        return _resp(401, {"code": "UNAUTHORIZED", "message": claims})
-    if not jwt_allows_client(claims, client_id):
-        return _resp(403, {"code": "FORBIDDEN", "message": "clientId no permitido para este token."})
-    if claims.get("role") == "user" and int(claims["sub"]) != user_id:
-        return _resp(
-            403,
-            {"code": "FORBIDDEN", "message": "Con rol user solo puedes guardar con tu propio userId."},
-        )
+    worker = monitoring_worker_secret_ok(event)
+    metadatos = reporte.get("metadatos") if isinstance(reporte.get("metadatos"), dict) else {}
+    entity_id = body.get("entityId") or metadatos.get("entityId")
+
+    if worker:
+        if not entity_id:
+            return _resp(
+                400,
+                {"code": "BAD_REQUEST", "message": "entityId es requerido para worker save."},
+            )
+        if not _entity_belongs_to_client(client_id, str(entity_id)):
+            return _resp(
+                403,
+                {"code": "FORBIDDEN", "message": "entityId no pertenece a clientId."},
+            )
+    else:
+        claims = require_jwt(event)
+        if isinstance(claims, str):
+            return _resp(401, {"code": "UNAUTHORIZED", "message": claims})
+        if not jwt_allows_client(claims, client_id):
+            return _resp(403, {"code": "FORBIDDEN", "message": "clientId no permitido para este token."})
+        if claims.get("role") == "user" and int(claims["sub"]) != user_id:
+            return _resp(
+                403,
+                {"code": "FORBIDDEN", "message": "Con rol user solo puedes guardar con tu propio userId."},
+            )
 
     ucheck = rest_json("GET", "nuwa_users", query=f"id=eq.{user_id}&select=id&limit=1")
     if not ucheck:
@@ -258,8 +314,6 @@ def handle_save(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
     db_meta = metadata_to_db_row(meta)
     created_at = now_iso_z()
 
-    metadatos = reporte.get("metadatos") if isinstance(reporte.get("metadatos"), dict) else {}
-    entity_id = body.get("entityId") or metadatos.get("entityId")
     parent_entity_id = body.get("parentEntityId") or metadatos.get("parentEntityId")
     group_id = body.get("groupId") or metadatos.get("groupId")
     group_name = body.get("groupName") or metadatos.get("groupName")
@@ -334,19 +388,30 @@ def handle_update(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]
     folio = str(folio)
     client_hint = body.get("clientId")
     cid = int(client_hint) if client_hint is not None else None
-    claims = require_jwt(event)
-    if isinstance(claims, str):
-        return _resp(401, {"code": "UNAUTHORIZED", "message": claims})
-    bound = effective_tenant_scope(claims)
-    if bound is not None:
-        if cid is not None and cid != bound:
-            return _resp(
-                403,
-                {"message": "El clientId no corresponde al token.", "code": "FORBIDDEN"},
-            )
+
+    worker = monitoring_worker_secret_ok(event)
+    if worker:
+        if cid is None:
+            return _resp(400, {"code": "BAD_REQUEST", "message": "clientId es requerido para worker update."})
+    else:
+        claims = require_jwt(event)
+        if isinstance(claims, str):
+            return _resp(401, {"code": "UNAUTHORIZED", "message": claims})
+        bound = effective_tenant_scope(claims)
+        if bound is not None:
+            if cid is not None and cid != bound:
+                return _resp(
+                    403,
+                    {"message": "El clientId no corresponde al token.", "code": "FORBIDDEN"},
+                )
 
     rows = _find_report_rows(folio, cid)
-    if bound is not None:
+    if worker:
+        if not rows:
+            return _resp(404, {"message": f"No se encontró reporte con folio {folio}"})
+        if int(rows[0]["client_id"]) != cid:
+            return _resp(403, {"code": "FORBIDDEN", "message": "Reporte no pertenece a clientId."})
+    elif bound is not None:
         rows = [r for r in rows if int(r["client_id"]) == bound]
     if not rows:
         return _resp(404, {"message": f"No se encontró reporte con folio {folio}"})

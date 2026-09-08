@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import base64
-import hmac
 import json
-import os
 from typing import Any
 
 from nuwa_api_auth import effective_tenant_scope, jwt_allows_client, jwt_matches_actor_body, require_jwt
@@ -13,6 +11,7 @@ from nuwa_config import DatabaseConfigError, SupabaseConfigError, ensure_data_ba
 from nuwa_errors import SupabaseRestError
 from nuwa_http import CORS_HEADERS
 from nuwa_obs_log import log_handler_enter, log_phase
+from nuwa_monitoring_worker import monitoring_worker_claims, monitoring_worker_secret_ok
 
 
 def _resp(status: int, body: dict[str, Any]) -> dict[str, Any]:
@@ -31,29 +30,6 @@ def _body(event: dict[str, Any]) -> dict[str, Any]:
         return json.loads(raw) if isinstance(raw, str) else {}
     except json.JSONDecodeError:
         return {}
-
-
-def _headers_lower(event: dict[str, Any]) -> dict[str, str]:
-    raw = event.get("headers") or {}
-    return {str(k).lower(): str(v) for k, v in raw.items()}
-
-
-def monitoring_worker_secret_ok(event: dict[str, Any]) -> bool:
-    expected = (os.environ.get("MONITORING_WORKER_SECRET") or "").strip()
-    if not expected:
-        return False
-    headers = _headers_lower(event)
-    got = (headers.get("x-monitoring-worker-secret") or "").strip()
-    if not got:
-        auth = headers.get("authorization") or ""
-        if auth.lower().startswith("bearer "):
-            token = auth[7:].strip()
-            # Only treat as worker secret if it matches (not a JWT)
-            if token and "." not in token:
-                got = token
-    if not got:
-        return False
-    return hmac.compare_digest(got, expected)
 
 
 def _auth(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any] | str:
@@ -86,7 +62,7 @@ def _auth_user_or_worker(
                 int(body["clientId"])
             except (KeyError, TypeError, ValueError):
                 return "BAD_CLIENT"
-        return {"role": "monitoring_worker", "worker": True}
+        return monitoring_worker_claims()
     return _auth(body, event)
 
 
@@ -130,7 +106,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         if any(path.endswith(p) for p in worker_only_paths):
             if not monitoring_worker_secret_ok(event):
                 return _resp(401, {"code": "UNAUTHORIZED", "message": "Se requiere x-monitoring-worker-secret"})
-            auth: dict[str, Any] | str = {"role": "monitoring_worker", "worker": True}
+            auth: dict[str, Any] | str = monitoring_worker_claims()
         elif any(path.endswith(p) for p in worker_or_user_paths):
             auth = _auth_user_or_worker(body, event, require_client_id=True)
         else:

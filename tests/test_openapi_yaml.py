@@ -20,6 +20,10 @@ def test_openapi_parses() -> None:
         data["components"]["schemas"]["EntityMonitoringListResponse"]["properties"]["items"]["items"]["allOf"][1]["properties"]
     )
     assert "lastError" in monitoring_list
+    reports_get = data["paths"]["/v1/reports/get"]["get"]["description"]
+    assert "x-monitoring-worker-secret" in reports_get
+    reports_save = data["paths"]["/v1/reports/save"]["post"]["description"]
+    assert "x-monitoring-worker-secret" in reports_save
     assert "/v1/source-category-id/create" in data["paths"]
     assert "/v1/source-category-id/list" in data["paths"]
     assert "/v1/source-category-id/{id}" in data["paths"]
