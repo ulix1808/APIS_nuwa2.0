@@ -46,6 +46,9 @@ Script de bash en la **raíz del repo** (`APIs/scripts/smoke_api.sh`). Ejecutarl
    - `POST /v1/admin/companies/list`
    - `POST /v1/admin/roles/list`
    - `POST /v1/admin/users/list`
+   - `POST /v1/clients/list` y `POST /v1/clients/get` (panel admin; requiere **super_admin**)
+
+Documentación panel plataforma: [`ADMIN_PLATFORM_API.md`](./ADMIN_PLATFORM_API.md).
 
 Esas rutas **no insertan ni actualizan** datos de producto en Postgres (solo consultas). Pueden generar logs/métricas en AWS como cualquier llamada a la API.
 

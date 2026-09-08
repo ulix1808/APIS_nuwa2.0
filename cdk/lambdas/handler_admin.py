@@ -16,6 +16,22 @@ from nuwa_config import DatabaseConfigError, SupabaseConfigError, ensure_data_ba
 from nuwa_errors import SupabaseRestError
 from nuwa_http import json_response
 from nuwa_obs_log import log_await, log_done, log_handler_enter, log_phase
+from nuwa_admin_platform_pg import (
+    admin_users_invite,
+    admin_users_list_platform,
+    admin_users_resend_invite,
+    admin_users_reset_password,
+    admin_users_update_platform,
+    clients_create,
+    clients_delete,
+    clients_get,
+    clients_list,
+    clients_reactivate,
+    clients_reset_token_usage,
+    clients_suspend,
+    clients_update,
+    require_super_admin,
+)
 from nuwa_password import hash_password
 from nuwa_rbac import can_manage_company, can_manage_users
 from nuwa_supabase import fetch_user_with_role, rest_json
@@ -355,13 +371,47 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         if path.endswith("/admin/roles/list"):
             return roles_list(actor, body)
         if path.endswith("/admin/users/list"):
+            if actor["role_slug"] == "super_admin" and body.get("targetClientId") is None:
+                return _resp(200, admin_users_list_platform(body))
             return users_list(actor, body)
         if path.endswith("/admin/users/create"):
             return users_create(actor, body)
         if path.endswith("/admin/users/update"):
+            if actor["role_slug"] == "super_admin" and body.get("targetUserId") is not None:
+                return _resp(200, admin_users_update_platform(body))
             return users_update(actor, body)
         if path.endswith("/admin/users/delete"):
             return users_delete(actor, body)
+
+        # Panel admin plataforma (BFF /v2/admin) — super_admin only
+        try:
+            require_super_admin(actor)
+        except SupabaseRestError as e:
+            return _resp(e.status, {"code": "FORBIDDEN", "message": e.body})
+
+        if path.endswith("/clients/list"):
+            return _resp(200, clients_list(body))
+        if path.endswith("/clients/get"):
+            return _resp(200, clients_get(body))
+        if path.endswith("/clients/create"):
+            return _resp(201, clients_create(body))
+        if path.endswith("/clients/update"):
+            return _resp(200, clients_update(body))
+        if path.endswith("/clients/suspend"):
+            return _resp(200, clients_suspend(body))
+        if path.endswith("/clients/reactivate"):
+            return _resp(200, clients_reactivate(body))
+        if path.endswith("/clients/delete"):
+            return _resp(200, clients_delete(body))
+        if path.endswith("/clients/tokens/reset-usage"):
+            return _resp(200, clients_reset_token_usage(body))
+        if path.endswith("/admin/users/reset-password"):
+            return _resp(200, admin_users_reset_password(body))
+        if path.endswith("/admin/users/resend-invite"):
+            return _resp(200, admin_users_resend_invite(body))
+        if path.endswith("/admin/users/invite"):
+            return _resp(201, admin_users_invite(body))
+
         return _resp(404, {"code": "NOT_FOUND", "message": path})
     except SupabaseRestError as e:
         return _resp(

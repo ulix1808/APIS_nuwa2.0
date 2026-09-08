@@ -1,0 +1,213 @@
+"""Unit tests — nuwa_admin_platform_pg (panel admin plataforma)."""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from typing import Any
+from unittest import mock
+
+import pytest
+
+from nuwa_admin_platform_pg import (
+    _map_app_role_to_id,
+    _map_role_slug,
+    _user_api,
+    admin_users_invite,
+    clients_list,
+    require_super_admin,
+)
+from nuwa_errors import SupabaseRestError
+
+
+def test_require_super_admin_allows() -> None:
+    require_super_admin({"role_slug": "super_admin"})
+
+
+def test_require_super_admin_denies() -> None:
+    with pytest.raises(SupabaseRestError) as exc:
+        require_super_admin({"role_slug": "admin"})
+    assert exc.value.status == 403
+
+
+def test_role_mapping() -> None:
+    assert _map_role_slug("super_admin") == "master"
+    assert _map_role_slug("user") == "analyst"
+    assert _map_app_role_to_id("master") == 1
+    assert _map_app_role_to_id("admin") == 2
+    assert _map_app_role_to_id("analyst") == 3
+
+
+def test_user_api_shape() -> None:
+    u = _user_api(
+        {
+            "id": 5,
+            "email": "a@b.com",
+            "full_name": "Ana",
+            "role_slug": "super_admin",
+            "is_active": True,
+            "client_id": 1,
+        },
+        company_name="Nuwa",
+    )
+    assert u["role"] == "master"
+    assert u["status"] == "active"
+    assert u["companyName"] == "Nuwa"
+
+
+class _FakeCursor:
+    def __init__(self, script: list[tuple[Any, ...]]) -> None:
+        self._script = list(script)
+        self._idx = 0
+
+    def fetchone(self) -> dict[str, Any] | None:
+        if self._idx >= len(self._script):
+            return None
+        row = self._script[self._idx]
+        self._idx += 1
+        if row is None:
+            return None
+        if isinstance(row, dict):
+            return row
+        raise TypeError(row)
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        if self._idx >= len(self._script):
+            return []
+        row = self._script[self._idx]
+        self._idx += 1
+        if isinstance(row, list):
+            return row
+        if isinstance(row, dict):
+            return [row]
+        raise TypeError(row)
+
+
+class _FakeConn:
+    def __init__(self, script: list[Any]) -> None:
+        self._script = script
+        self.committed = False
+
+    def execute(self, _sql: str, _params: Any = None) -> _FakeCursor:
+        item = self._script.pop(0)
+        if callable(item):
+            return item(_sql, _params)
+        return _FakeCursor([item] if not isinstance(item, list) else item)
+
+    def commit(self) -> None:
+        self.committed = True
+
+
+@contextmanager
+def _fake_conn(script: list[Any]):
+    conn = _FakeConn(script)
+    yield conn
+
+
+@mock.patch("nuwa_admin_platform_pg._conn")
+def test_clients_list_returns_stats(mock_conn) -> None:
+    rows = [
+        {
+            "id": 1,
+            "name": "Nuwa",
+            "rfc": "RFC1",
+            "legal_rep": None,
+            "address": None,
+            "sector": None,
+            "plan": "professional",
+            "status": "active",
+            "token_limit": 2000,
+            "tokens_used": 100,
+            "billing_contact": None,
+            "billing_email": None,
+            "payment_method": None,
+            "next_invoice": None,
+            "compliance_officer_user_id": None,
+            "created_at": "2026-01-01",
+            "company_name": "Nuwa",
+        }
+    ]
+    user_row = {
+        "id": 1,
+        "email": "nuwa@nuwa.space",
+        "full_name": "Admin",
+        "role_slug": "super_admin",
+        "is_active": True,
+        "client_id": 1,
+        "company_name": "Nuwa",
+    }
+    usage_row = {
+        "screenings": 10,
+        "background_checks": 0,
+        "monitoring": 0,
+        "targeted": 0,
+    }
+
+    mock_conn.side_effect = lambda: _fake_conn(
+        [
+            rows,
+            [user_row],
+            usage_row,
+        ]
+    )
+
+    out = clients_list({"limit": 10})
+    assert out["success"] is True
+    assert len(out["clients"]) == 1
+    assert out["clients"][0]["name"] == "Nuwa"
+    assert out["clients"][0]["usage"]["screenings"] == 10
+    assert out["stats"]["totalClients"] == 1
+    assert out["stats"]["totalTokensConsumed"] == 100
+
+
+@mock.patch("nuwa_admin_platform_pg.hash_password", return_value="pbkdf2_sha256$s$hash")
+@mock.patch("nuwa_admin_platform_pg._generate_temp_password", return_value="TempPass123!")
+@mock.patch("nuwa_admin_platform_pg._conn")
+def test_admin_users_invite_returns_temp_password(mock_conn, _gen, _hash) -> None:
+    mock_conn.side_effect = lambda: _fake_conn(
+        [
+            {"name": "Nuwa"},
+            None,
+            {
+                "id": 99,
+                "email": "new@nuwa.space",
+                "full_name": "New",
+                "client_id": 1,
+                "is_active": True,
+            },
+            {"slug": "user"},
+        ]
+    )
+
+    out = admin_users_invite(
+        {
+            "email": "new@nuwa.space",
+            "name": "New User",
+            "role": "analyst",
+            "clientId": 1,
+        }
+    )
+    assert out["success"] is True
+    assert out["tempPassword"] == "TempPass123!"
+    assert out["user"]["email"] == "new@nuwa.space"
+    assert out["user"]["status"] == "invited"
+    _hash.assert_called_once_with("TempPass123!")
+
+
+@mock.patch("nuwa_admin_platform_pg._conn")
+def test_admin_users_invite_email_exists(mock_conn) -> None:
+    mock_conn.side_effect = lambda: _fake_conn(
+        [
+            {"name": "Nuwa"},
+            {"id": 1},
+        ]
+    )
+    with pytest.raises(SupabaseRestError) as exc:
+        admin_users_invite(
+            {
+                "email": "exists@nuwa.space",
+                "name": "X",
+                "role": "analyst",
+                "clientId": 1,
+            }
+        )
+    assert exc.value.status == 409

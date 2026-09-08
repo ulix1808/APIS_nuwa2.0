@@ -1641,7 +1641,10 @@ paths:
       tags: [Admin]
       summary: Listar usuarios de una compañía
       description: |
-        `super_admin` o **admin** de la compañía indicada en `targetClientId` (por defecto la del actor).
+        **Tenant (`targetClientId` presente o admin de compañía):** lista usuarios del tenant.
+
+        **Plataforma (`super_admin` sin `targetClientId`):** lista global con filtros
+        `search`, `role`, `clientId`, `status` — ver también tag AdminPlatform.
       security:
         - BearerAuth: []
       requestBody:
@@ -1707,6 +1710,227 @@ paths:
       responses:
         "200":
           description: OK
+
+  /v1/clients/list:
+    post:
+      tags: [AdminPlatform]
+      operationId: platformClientsList
+      summary: Listar clientes (panel admin)
+      description: Solo `super_admin`. Une `companies` + `clients` + usuarios + uso de tokens.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformClientsListRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformClientsListResponse"
+        "403":
+          description: Requiere super_admin
+
+  /v1/clients/get:
+    post:
+      tags: [AdminPlatform]
+      operationId: platformClientsGet
+      summary: Detalle de cliente
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformClientTargetRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformClientDetailResponse"
+
+  /v1/clients/create:
+    post:
+      tags: [AdminPlatform]
+      operationId: platformClientsCreate
+      summary: Crear tenant (companies + clients)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformClientCreateRequest"
+      responses:
+        "201":
+          description: Creado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformClientMutationResponse"
+
+  /v1/clients/update:
+    post:
+      tags: [AdminPlatform]
+      operationId: platformClientsUpdate
+      summary: Actualizar metadatos de cliente
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformClientUpdateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformClientMutationResponse"
+
+  /v1/clients/suspend:
+    post:
+      tags: [AdminPlatform]
+      operationId: platformClientsSuspend
+      summary: Suspender tenant y desactivar usuarios
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformClientTargetRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/clients/reactivate:
+    post:
+      tags: [AdminPlatform]
+      operationId: platformClientsReactivate
+      summary: Reactivar tenant
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformClientTargetRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/clients/delete:
+    post:
+      tags: [AdminPlatform]
+      operationId: platformClientsDelete
+      summary: Soft-delete (suspend) tenant
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformClientTargetRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/clients/tokens/reset-usage:
+    post:
+      tags: [AdminPlatform]
+      operationId: platformClientsResetTokenUsage
+      summary: Reset contador tokens_used
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformClientTargetRequest"
+      responses:
+        "200":
+          description: OK
+
+  /v1/admin/users/invite:
+    post:
+      tags: [AdminPlatform]
+      operationId: platformAdminUsersInvite
+      summary: Invitar usuario (devuelve tempPassword para BFF/SES)
+      description: Solo `super_admin`. No envía correo; el BFF usa `tempPassword` en el email.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformAdminUsersInviteRequest"
+      responses:
+        "201":
+          description: Usuario creado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformAdminUsersInviteResponse"
+        "409":
+          description: email_exists
+
+  /v1/admin/users/resend-invite:
+    post:
+      tags: [AdminPlatform]
+      operationId: platformAdminUsersResendInvite
+      summary: Regenerar contraseña temporal (reenvío invitación)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformAdminUserTargetRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformAdminUsersInviteResponse"
+
+  /v1/admin/users/reset-password:
+    post:
+      tags: [AdminPlatform]
+      operationId: platformAdminUsersResetPassword
+      summary: Reset contraseña temporal
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformAdminUserTargetRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformAdminUsersInviteResponse"
 
 components:
   securitySchemes:
@@ -2649,7 +2873,17 @@ components:
           properties:
             targetClientId:
               type: integer
-              description: Por defecto la compañía del actor
+              description: Tenant (legacy). Omitir para listado plataforma super_admin.
+            search:
+              type: string
+            role:
+              type: string
+            clientId:
+              type: integer
+              description: Filtro por tenant (solo plataforma)
+            status:
+              type: string
+              enum: [active, disabled, all]
 
     CreateUserRequest:
       allOf:
@@ -2701,6 +2935,176 @@ components:
             targetUserId:
               type: integer
               format: int64
+
+    PlatformClientTargetRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          required: [targetClientId]
+          properties:
+            targetClientId:
+              type: integer
+
+    PlatformClientsListRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          properties:
+            search:
+              type: string
+            status:
+              type: string
+              enum: [active, suspended, trial, all]
+            limit:
+              type: integer
+              default: 200
+            offset:
+              type: integer
+              default: 0
+
+    PlatformClientUsage:
+      type: object
+      properties:
+        screenings: { type: integer }
+        backgroundChecks: { type: integer }
+        monitoring: { type: integer }
+        targeted: { type: integer }
+
+    PlatformAdminUser:
+      type: object
+      properties:
+        id: { type: integer }
+        email: { type: string, format: email }
+        name: { type: string }
+        role: { type: string }
+        status: { type: string, enum: [active, disabled, invited] }
+        clientId: { type: integer }
+        companyName: { type: string }
+
+    PlatformClient:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        rfc: { type: string }
+        plan: { type: string }
+        status: { type: string }
+        tokenLimit: { type: integer }
+        tokensUsed: { type: integer }
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlatformAdminUser"
+        usage:
+          $ref: "#/components/schemas/PlatformClientUsage"
+
+    PlatformClientsStats:
+      type: object
+      properties:
+        totalClients: { type: integer }
+        activeClients: { type: integer }
+        totalTokensAllocated: { type: integer }
+        totalTokensConsumed: { type: integer }
+
+    PlatformClientsListResponse:
+      type: object
+      required: [success, clients, stats]
+      properties:
+        success: { type: boolean }
+        clients:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlatformClient"
+        stats:
+          $ref: "#/components/schemas/PlatformClientsStats"
+
+    PlatformClientDetailResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        client:
+          $ref: "#/components/schemas/PlatformClient"
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlatformAdminUser"
+
+    PlatformClientCreateRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          required: [name, rfc]
+          properties:
+            name: { type: string }
+            rfc: { type: string }
+            legalRep: { type: string }
+            address: { type: string }
+            sector: { type: string }
+            plan: { type: string }
+            tokenLimit: { type: integer }
+            billingContact: { type: string }
+            billingEmail: { type: string, format: email }
+            paymentMethod: { type: string }
+
+    PlatformClientUpdateRequest:
+      allOf:
+        - $ref: "#/components/schemas/PlatformClientTargetRequest"
+        - type: object
+          properties:
+            name: { type: string }
+            rfc: { type: string }
+            legalRep: { type: string }
+            address: { type: string }
+            sector: { type: string }
+            plan: { type: string }
+            tokenLimit: { type: integer }
+            billingContact: { type: string }
+            billingEmail: { type: string }
+            paymentMethod: { type: string }
+            nextInvoice: { type: string, format: date }
+            complianceOfficerUserId: { type: integer, nullable: true }
+
+    PlatformClientMutationResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        client:
+          $ref: "#/components/schemas/PlatformClient"
+
+    PlatformAdminUsersInviteRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          required: [email, name, role, clientId]
+          properties:
+            email: { type: string, format: email }
+            name: { type: string }
+            role:
+              type: string
+              description: Rol app (master, admin, analyst, …)
+            clientId:
+              type: integer
+              description: Tenant destino (distinto del clientId del actor JWT)
+
+    PlatformAdminUserTargetRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          required: [targetUserId]
+          properties:
+            targetUserId:
+              type: integer
+
+    PlatformAdminUsersInviteResponse:
+      type: object
+      required: [success, user, tempPassword]
+      properties:
+        success: { type: boolean }
+        user:
+          $ref: "#/components/schemas/PlatformAdminUser"
+        tempPassword:
+          type: string
+          description: Solo para el BFF; no registrar en logs
 
     PartyType:
       type: string

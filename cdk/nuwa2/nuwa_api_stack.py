@@ -577,6 +577,16 @@ class NuwaApiStack(Stack):
         clients.add_resource("storage").add_resource("init").add_method(
             "POST", documents_integration, api_key_required=False
         )
+        clients.add_resource("list").add_method("POST", admin_integration, api_key_required=False)
+        clients.add_resource("get").add_method("POST", admin_integration, api_key_required=False)
+        clients.add_resource("create").add_method("POST", admin_integration, api_key_required=False)
+        clients.add_resource("update").add_method("POST", admin_integration, api_key_required=False)
+        clients.add_resource("suspend").add_method("POST", admin_integration, api_key_required=False)
+        clients.add_resource("reactivate").add_method("POST", admin_integration, api_key_required=False)
+        clients.add_resource("delete").add_method("POST", admin_integration, api_key_required=False)
+        clients.add_resource("tokens").add_resource("reset-usage").add_method(
+            "POST", admin_integration, api_key_required=False
+        )
 
         docs = v1.add_resource("documents")
         docs.add_resource("presign").add_method("POST", documents_integration, api_key_required=False)
@@ -612,6 +622,9 @@ class NuwaApiStack(Stack):
         au.add_resource("create").add_method("POST", admin_integration, api_key_required=False)
         au.add_resource("update").add_method("POST", admin_integration, api_key_required=False)
         au.add_resource("delete").add_method("POST", admin_integration, api_key_required=False)
+        au.add_resource("invite").add_method("POST", admin_integration, api_key_required=False)
+        au.add_resource("resend-invite").add_method("POST", admin_integration, api_key_required=False)
+        au.add_resource("reset-password").add_method("POST", admin_integration, api_key_required=False)
 
         plan = api.add_usage_plan(
             "NuwaUsagePlan",

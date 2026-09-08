@@ -16,6 +16,7 @@ Referencia de lo implementado en el backend (Lambdas Python + Postgres/RDS + S3)
 | **Búsqueda** | `*-lambda-search` | `POST /v1/search` | Desplegado prod |
 | **Ingest chunks** | `*-lambda-chunks` | `POST /v1/chunks/ingest` | Desplegado prod |
 | **Reportes** | `*-lambda-reports` | `/v1/reports/*` | Desplegado prod (+ vínculo entidad) |
+| **Admin plataforma** | `*-lambda-admin` | `/v1/clients/*`, `/v1/admin/users/invite`, `reset-password`, … | Desplegado prod — ver [`ADMIN_PLATFORM_API.md`](./ADMIN_PLATFORM_API.md) |
 | **Match / vínculos** | Lógica compartida | `entity_helpers.find_matches` | Usado en entidades y documentos |
 
 ---
@@ -45,7 +46,8 @@ Front → presign (API) → PUT directo S3 → upload-complete → finalize (Gro
 | `cdk/lambdas/nuwa_documents_pg.py` | CRUD documentos, finalize, links, indexación |
 | `cdk/lambdas/nuwa_s3_documents.py` | Presigned PUT/GET, HeadObject |
 | `cdk/lambdas/document_helpers.py` | MIME, keys S3, chunks para index |
-| `cdk/lambdas/handler_admin.py` | Hook `storage/init` al crear compañía |
+| `cdk/lambdas/handler_admin.py` | RBAC legacy + panel plataforma (`nuwa_admin_platform_pg.py`) |
+| `cdk/lambdas/nuwa_admin_platform_pg.py` | CRUD `clients` / invite / reset (Postgres directo) |
 
 ### Flujo API
 

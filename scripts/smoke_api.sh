@@ -130,6 +130,13 @@ curl_json POST "$BASE/v1/admin/roles/list" "$ACTOR"
 step "POST /v1/admin/users/list"
 curl_json POST "$BASE/v1/admin/users/list" "$ACTOR"
 
+step "POST /v1/clients/list (panel admin — super_admin)"
+curl_json POST "$BASE/v1/clients/list" "$ACTOR"
+
+step "POST /v1/clients/get targetClientId=$CID"
+GET_CLIENT=$(python3 -c "import json; a=json.loads('$ACTOR'); a['targetClientId']=int('$CID'); print(json.dumps(a))")
+curl_json POST "$BASE/v1/clients/get" "$GET_CLIENT"
+
 if $WRITE; then
   TS=$(date +%s)
   NAME="smoke-source-$TS"
