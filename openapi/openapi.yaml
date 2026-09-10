@@ -2837,7 +2837,9 @@ components:
           example: Bearer
         expiresIn:
           type: integer
-          description: Segundos de validez del access token
+          description: |
+            Segundos de validez del access token. Default de mint: **259200** (72 h),
+            configurable con env `NUWA_JWT_TTL_SECONDS` (mínimo 300).
 
     CreateCompanyResponse:
       type: object

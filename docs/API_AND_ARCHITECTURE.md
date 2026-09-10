@@ -14,7 +14,7 @@ Los handlers siguen pidiendo **`clientId`** y **`userId`** en el body (o query) 
 
 **Mejoras de seguridad recomendadas (evolución):**
 
-- **Corto plazo:** rotar `jwt_signing_secret` y `fernet_key` en producción tras el deploy; TTL del JWT vía `NUWA_JWT_TTL_SECONDS` (default 8 h).
+- **Corto plazo:** rotar `jwt_signing_secret` y `fernet_key` en producción tras el deploy; TTL del JWT vía `NUWA_JWT_TTL_SECONDS` (default 72 h).
 - **Medio plazo:** **refresh tokens** (httpOnly cookie o tabla de revocación); **RS256** con par de claves en KMS; **Lambda authorizer** en API Gateway para no duplicar verificación en cada handler.
 - **Alto:** **KMS envelope** para la columna de API key en lugar de Fernet con clave en un solo JSON; **WAF** / rate limit en el stage al quitar API Key obligatoria en gateway.
 
@@ -116,7 +116,7 @@ Implementación: `nuwa_rbac.py` (`can_manage_company`, `can_manage_users`) y com
 
 | Riesgo | Mitigación actual | Mejora posible |
 |--------|-------------------|----------------|
-| Robo de `accessToken` (XSS, logs) | TTL corto (`NUWA_JWT_TTL_SECONDS`); HTTPS | Refresh en httpOnly cookie; revocación por `jti` |
+| Robo de `accessToken` (XSS, logs) | TTL configurable (`NUWA_JWT_TTL_SECONDS`, default 72 h); HTTPS | Refresh en httpOnly cookie; revocación por `jti` |
 | Fuga del secreto `app-crypto` | IAM mínima en Lambdas; no commitear | Rotación de secretos; KMS para Fernet/JWT |
 | Fuga de dump de BD | `apigw_key_secret` cifrado con Fernet | KMS envelope; column-level encryption |
 | Abuso sin API Key en gateway | Cualquiera puede invocar URL (coste/throttle) | WAF, usage plan alternativo, authorizer en GW |

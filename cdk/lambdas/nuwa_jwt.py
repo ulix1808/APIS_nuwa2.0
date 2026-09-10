@@ -17,10 +17,11 @@ _ALG = "HS256"
 
 
 def _ttl_seconds() -> int:
+    # Default 72h (259200s). Override with NUWA_JWT_TTL_SECONDS (min 300).
     try:
-        return max(300, int(os.environ.get("NUWA_JWT_TTL_SECONDS", "28800")))
+        return max(300, int(os.environ.get("NUWA_JWT_TTL_SECONDS", "259200")))
     except (TypeError, ValueError):
-        return 28800
+        return 259200
 
 
 def mint_access_token(

@@ -27,6 +27,8 @@ def test_openapi_parses() -> None:
     assert "/v1/source-category-id/create" in data["paths"]
     assert "/v1/source-category-id/list" in data["paths"]
     assert "/v1/source-category-id/{id}" in data["paths"]
+    expires = data["components"]["schemas"]["LoginResponse"]["properties"]["expiresIn"]["description"]
+    assert "259200" in expires
 
 
 def test_openapi_no_duplicate_yaml_keys() -> None:
