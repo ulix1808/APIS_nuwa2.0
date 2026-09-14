@@ -686,6 +686,11 @@ class NuwaApiStack(Stack):
             monitoring_worker_secret.secret_value.unsafe_unwrap(),
         )
         monitoring_worker_secret.grant_read(entities_fn)
+        reports_fn.add_environment(
+            "MONITORING_WORKER_SECRET",
+            monitoring_worker_secret.secret_value.unsafe_unwrap(),
+        )
+        monitoring_worker_secret.grant_read(reports_fn)
 
         monitoring_bff_url = (
             self.node.try_get_context("monitoringBffUrl")
@@ -804,7 +809,7 @@ class NuwaApiStack(Stack):
             self,
             "MonitoringWorkerSecretArn",
             value=monitoring_worker_secret.secret_arn,
-            description="ARN del secreto MONITORING_WORKER_SECRET (due/run/alerts + BFF enqueue)",
+            description="ARN del secreto MONITORING_WORKER_SECRET (entities due/run/alerts + reports worker + BFF enqueue)",
         )
         CfnOutput(
             self,
