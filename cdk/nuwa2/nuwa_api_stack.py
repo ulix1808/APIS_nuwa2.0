@@ -716,13 +716,13 @@ class NuwaApiStack(Stack):
         )
         monitoring_worker_secret.grant_read(monitoring_tick_fn)
 
-        # Every 8h (00/08/16 UTC). Weekly cadence can wait a few hours after a failed run.
+        # Every 2h on the hour UTC. Failed runs set next_run_at=now and retry next tick.
         events.Rule(
             self,
             "MonitoringDueTickSchedule",
             rule_name=f"{prefix}-monitoring-due-tick",
-            description="Monitoreo continuo: due → BFF enqueue cada 8h (00/08/16 UTC)",
-            schedule=events.Schedule.cron(minute="0", hour="0,8,16"),
+            description="Monitoreo continuo: due → BFF enqueue cada 2h (UTC)",
+            schedule=events.Schedule.cron(minute="0", hour="*/2"),
         ).add_target(targets.LambdaFunction(monitoring_tick_fn))
 
         for construct in (
@@ -815,7 +815,7 @@ class NuwaApiStack(Stack):
             self,
             "MonitoringDueTickFunctionName",
             value=monitoring_tick_fn.function_name,
-            description="Lambda monitoring-due-tick (EventBridge cada 8h: 00/08/16 UTC)",
+            description="Lambda monitoring-due-tick (EventBridge cada 2h UTC)",
         )
 
         CfnOutput(

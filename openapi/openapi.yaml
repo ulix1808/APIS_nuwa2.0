@@ -913,7 +913,7 @@ paths:
       description: |
         JWT de usuario o `x-monitoring-worker-secret`.
         `status=ok` avanza `next_run_at` según `frequency`.
-        `error`/`skipped` deja el monitoreo due de inmediato para reintentar en el siguiente tick EventBridge (cada 8 h: 00/08/16 UTC).
+        `error`/`skipped` deja el monitoreo due de inmediato para reintentar en el siguiente tick EventBridge (cada 2 h UTC).
       security:
         - BearerAuth: []
       requestBody:

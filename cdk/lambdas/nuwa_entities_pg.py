@@ -916,7 +916,7 @@ def entities_monitoring_run_finish_pg(body: dict[str, Any]) -> dict[str, Any]:
             last_status = "ok"
             last_error = None
         else:
-            # Due immediately so the next scheduler tick retries (every 8h).
+            # Due immediately so the next scheduler tick retries (every 2h).
             nxt = now
             last_status = "skipped" if status == "skipped" else "error"
             last_error = str(error_message) if error_message else status
