@@ -491,6 +491,10 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return handle_update(body, event)
         if method == "POST" and path.endswith("/reports/delete"):
             return handle_delete(body, event)
+        if "/audit/" in path:
+            import handler_audit
+
+            return handler_audit.handler(event, context)
         return _resp(404, {"message": "Ruta no encontrada", "method": method, "path": path})
     except SupabaseRestError as e:
         return _resp(

@@ -16,6 +16,7 @@ Referencia de lo implementado en el backend (Lambdas Python + Postgres/RDS + S3)
 | **Búsqueda** | `*-lambda-search` | `POST /v1/search` | Desplegado prod |
 | **Ingest chunks** | `*-lambda-chunks` | `POST /v1/chunks/ingest` | Desplegado prod |
 | **Reportes** | `*-lambda-reports` | `/v1/reports/*` | Desplegado prod (+ vínculo entidad) |
+| **Auditoría** | `*-lambda-reports` | `/v1/audit/create`, `/v1/audit/list` | Desplegado prod |
 | **Admin plataforma** | `*-lambda-admin` | `/v1/clients/*`, `/v1/admin/users/invite`, `reset-password`, … | Desplegado prod — ver [`ADMIN_PLATFORM_API.md`](./ADMIN_PLATFORM_API.md) |
 | **Match / vínculos** | Lógica compartida | `entity_helpers.find_matches` | Usado en entidades y documentos |
 
@@ -261,6 +262,10 @@ Entidades `document_mention` **no aparecen** en `entities/list` salvo `includeDo
 ### 4.3 Vínculo reporte ↔ entidad
 
 `POST /v1/reports/save` acepta **`entityId`** (UUID). Actualiza historial de la entidad y consolida riesgo. Ver `touch_entity_after_report_pg` en `nuwa_entities_pg.py`.
+
+### 4.4 Auditoría de plataforma
+
+`POST /v1/audit/create` y `GET/POST /v1/audit/list` viven en la Lambda **reports** (`handler_audit.py` + `nuwa_audit_pg.py`). Tabla `nuwa_audit_events` (migración `20260914010000_nuwa_audit_events.sql`). JWT obligatorio; el tenant es el `cid` del token. Deduplica login/logout 5 min y el resto 2 min.
 
 **Monitoreo continuo (worker):** el scheduler/BFF puede llamar reportes con `x-monitoring-worker-secret` (`nuwa_monitoring_worker.py`):
 

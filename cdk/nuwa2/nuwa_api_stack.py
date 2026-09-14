@@ -609,6 +609,12 @@ class NuwaApiStack(Stack):
         upd.add_method("PUT", reports_integration, api_key_required=False)
         reports.add_resource("delete").add_method("POST", reports_integration, api_key_required=False)
 
+        audit = v1.add_resource("audit")
+        audit.add_resource("create").add_method("POST", reports_integration, api_key_required=False)
+        audit_list = audit.add_resource("list")
+        audit_list.add_method("GET", reports_integration, api_key_required=False)
+        audit_list.add_method("POST", reports_integration, api_key_required=False)
+
         admin = v1.add_resource("admin")
         ac = admin.add_resource("companies")
         ac.add_resource("list").add_method("POST", admin_integration, api_key_required=False)

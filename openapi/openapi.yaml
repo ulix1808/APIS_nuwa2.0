@@ -56,6 +56,8 @@ tags:
       No usa `risk_entity_chunks` ni suma riesgo de listas. Ver `docs/CJF_LEGAL_SOURCE.md`.
   - name: Reports
     description: Reportes post-búsqueda (tabla `reports`, JSON extensible)
+  - name: Audit
+    description: Registro de auditoría por `client_id` (`nuwa_audit_events`). El BFF solo hace proxy.
   - name: Entities
     description: |
       Entidades de negocio (Persona Física / Persona Moral) por `client_id`. Match pre-consulta (30 días),
@@ -1548,6 +1550,83 @@ paths:
           description: OK
         "500":
           $ref: "#/components/responses/ServerError"
+
+  /v1/audit/create:
+    post:
+      tags: [Audit]
+      summary: Registrar evento de auditoría del tenant
+      description: |
+        Persiste un evento en `nuwa_audit_events` acotado al `cid` del JWT.
+        Login y screening del BFF deben usar esta ruta (no RDS directo).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, category]
+              properties:
+                clientId: { type: integer }
+                userId: { type: integer }
+                type: { type: string }
+                category: { type: string }
+                user: { type: string }
+                userName: { type: string }
+                userRole: { type: string }
+                target: { type: string }
+                targetId: { type: string }
+                details: { type: string }
+                metadata: { type: object }
+                ipAddress: { type: string }
+                timestamp: { type: string }
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/audit/list:
+    get:
+      tags: [Audit]
+      summary: Listar auditoría del tenant (query)
+      description: Mismos filtros que POST. `clientId` y `limit` pueden ir en query.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: clientId
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 300, maximum: 1000 }
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Audit]
+      summary: Listar auditoría del tenant
+      description: Solo eventos del `clientId` del JWT. Resuelve nombres desde `nuwa_users`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientId: { type: integer }
+                limit: { type: integer, default: 300, maximum: 1000 }
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /v1/admin/companies/list:
     post:

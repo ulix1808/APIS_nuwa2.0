@@ -24,6 +24,7 @@ Referencia de **tablas y columnas** tal como se definen en `supabase/migrations/
 | `documents` | Metadata de documentos internos del cliente (S3 + extracción). |
 | `document_entity_links` | Vínculo parte/entidad extraída ↔ entidad en `entities`. |
 | `client_storage_profiles` | Prefijo S3 y cuotas por tenant para documentos. |
+| `nuwa_audit_events` | Eventos de auditoría por tenant (`client_id` numérico). |
 
 **Extensiones:** `pg_trgm` (búsqueda difusa sobre `chunk_text`).  
 **RLS:** activado en varias tablas desde migraciones; en RDS con rol `postgres`/service las políticas pueden no limitar al mismo modo que en Supabase — ver notas en migraciones.
@@ -235,6 +236,25 @@ Perfil de almacenamiento S3 por tenant (creado con `POST /v1/clients/storage/ini
 | `s3_prefix` | text | Ej. `clients/1/`. |
 | `max_storage_bytes` | bigint | Cuota opcional. |
 | `created_at` / `updated_at` | timestamptz | |
+
+---
+
+## `public.nuwa_audit_events`
+
+Eventos de auditoría por tenant. Migración `20260914010000_nuwa_audit_events.sql`. APIs: `POST /v1/audit/create`, `GET/POST /v1/audit/list`.
+
+| Columna | Tipo | Notas |
+|---------|------|--------|
+| `id` | text | PK (`AUD-…`). |
+| `client_id` | integer | Tenant. |
+| `user_id` | integer | Opcional; se usa para resolver nombre desde `nuwa_users`. |
+| `user_name` / `user_role` | text | Snapshot al registrar. |
+| `event_type` / `category` | text | Ej. `auth.login` / `auth`. |
+| `target` / `target_id` | text | Recurso afectado. |
+| `details` | text | |
+| `metadata` | jsonb | |
+| `ip_address` | text | |
+| `created_at` | timestamptz | Índice `(client_id, created_at DESC)`. |
 
 ---
 
