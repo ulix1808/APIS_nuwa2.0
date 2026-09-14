@@ -24,6 +24,10 @@ def test_openapi_parses() -> None:
     assert "x-monitoring-worker-secret" in reports_get
     reports_save = data["paths"]["/v1/reports/save"]["post"]["description"]
     assert "x-monitoring-worker-secret" in reports_save
+    alert_enum = data["paths"]["/v1/entities/alerts/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["alertType"]["enum"]
+    assert "run_failed" in alert_enum
+    finish_desc = data["paths"]["/v1/entities/monitoring/run-finish"]["post"]["description"]
+    assert "8 h" in finish_desc or "8h" in finish_desc
     assert "/v1/source-category-id/create" in data["paths"]
     assert "/v1/source-category-id/list" in data["paths"]
     assert "/v1/source-category-id/{id}" in data["paths"]

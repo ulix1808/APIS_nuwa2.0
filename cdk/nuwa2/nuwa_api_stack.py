@@ -705,13 +705,13 @@ class NuwaApiStack(Stack):
         )
         monitoring_worker_secret.grant_read(monitoring_tick_fn)
 
-        # ~02:00 America/Mexico_City en horario estándar (UTC-6) → 08:00 UTC
+        # Every 8h (00/08/16 UTC). Weekly cadence can wait a few hours after a failed run.
         events.Rule(
             self,
             "MonitoringDueTickSchedule",
             rule_name=f"{prefix}-monitoring-due-tick",
-            description="Monitoreo continuo: due → BFF enqueue (madrugada MX ≈ 02:00 CST)",
-            schedule=events.Schedule.cron(minute="0", hour="8"),
+            description="Monitoreo continuo: due → BFF enqueue cada 8h (00/08/16 UTC)",
+            schedule=events.Schedule.cron(minute="0", hour="0,8,16"),
         ).add_target(targets.LambdaFunction(monitoring_tick_fn))
 
         for construct in (
@@ -804,7 +804,7 @@ class NuwaApiStack(Stack):
             self,
             "MonitoringDueTickFunctionName",
             value=monitoring_tick_fn.function_name,
-            description="Lambda monitoring-due-tick (EventBridge ~02:00 MX / 08:00 UTC)",
+            description="Lambda monitoring-due-tick (EventBridge cada 8h: 00/08/16 UTC)",
         )
 
         CfnOutput(

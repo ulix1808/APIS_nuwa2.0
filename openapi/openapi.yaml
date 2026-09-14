@@ -908,7 +908,10 @@ paths:
     post:
       tags: [Entities]
       summary: Finalizar run de monitoreo (ok|error|skipped)
-      description: JWT de usuario o `x-monitoring-worker-secret`. Avanza `next_run_at` (calendario) o reintenta +1 día en error.
+      description: |
+        JWT de usuario o `x-monitoring-worker-secret`.
+        `status=ok` avanza `next_run_at` según `frequency`.
+        `error`/`skipped` deja el monitoreo due de inmediato para reintentar en el siguiente tick EventBridge (cada 8 h: 00/08/16 UTC).
       security:
         - BearerAuth: []
       requestBody:
@@ -998,7 +1001,7 @@ paths:
                 entityId: { type: string, format: uuid }
                 alertType:
                   type: string
-                  enum: [risk_change, new_match, new_media_mention, status_change]
+                  enum: [risk_change, new_match, new_media_mention, status_change, run_failed]
                 severity: { type: string, enum: [low, medium, high] }
                 title: { type: string }
                 description: { type: string }

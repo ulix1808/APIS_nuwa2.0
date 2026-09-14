@@ -105,7 +105,7 @@ CREATE INDEX idx_entity_monitoring_due
 ```
 
 **Scheduler (futuro):** ver spec unificado en el front Nuwa 2.0:  
-`docs/CONTINUOUS_MONITORING_ARCHITECTURE_20260822.md` (EventBridge en madrugada `America/Mexico_City`, BFF encola rescreen).  
+`docs/CONTINUOUS_MONITORING_ARCHITECTURE_20260822.md` (EventBridge cada 8 h: 00/08/16 UTC, BFF encola rescreen).  
 Resumen: `SELECT * FROM entity_monitoring WHERE is_enabled AND next_run_at <= now()` → enqueue BFF (no screening síncrono en Lambda).
 
 ### 2.3 Tabla `public.entity_monitoring_runs` (log)

@@ -6,7 +6,16 @@ from contextlib import contextmanager
 from typing import Any
 from unittest import mock
 
-from nuwa_entities_pg import _entity_api, entities_monitoring_list_pg, entities_monitoring_run_finish_pg
+from datetime import datetime, timezone
+
+from nuwa_entities_pg import (
+    _entity_api,
+    entities_alerts_create_pg,
+    entities_monitoring_due_pg,
+    entities_monitoring_list_pg,
+    entities_monitoring_run_finish_pg,
+)
+from nuwa_errors import SupabaseRestError
 
 
 class _FakeCursor:
@@ -161,3 +170,98 @@ def test_run_finish_ok_touches_entity(mock_conn, mock_touch) -> None:
         nivel_riesgo=None,
         nivel_numerico=2,
     )
+
+
+@mock.patch("nuwa_entities_pg.touch_entity_after_report_pg")
+@mock.patch("nuwa_entities_pg._conn")
+def test_run_finish_error_due_immediately(mock_conn, mock_touch) -> None:
+    run = {
+        "entity_id": "e1",
+        "monitoring_id": "m1",
+        "frequency": "weekly",
+        "is_enabled": True,
+    }
+
+    @contextmanager
+    def _cm():
+        yield _FakeConn([run, None, None])
+
+    mock_conn.side_effect = _cm
+    before = datetime.now(timezone.utc)
+    out = entities_monitoring_run_finish_pg(
+        {
+            "clientId": 1,
+            "runId": "r1",
+            "status": "error",
+            "error": "timeout",
+        }
+    )
+    after = datetime.now(timezone.utc)
+    assert out["lastRunStatus"] == "error"
+    mock_touch.assert_not_called()
+    nxt = datetime.fromisoformat(out["nextRunAt"].replace("Z", "+00:00"))
+    assert abs((nxt - before.replace(microsecond=0)).total_seconds()) < 2
+    assert nxt <= after
+
+
+@mock.patch("nuwa_entities_pg._conn")
+def test_due_allows_null_created_by_user(mock_conn) -> None:
+    row = {
+        "monitoring_id": "m1",
+        "entity_id": "e1",
+        "client_id": 1,
+        "frequency": "weekly",
+        "sources": ["sanctions"],
+        "next_run_at": None,
+        "created_by_user_id": None,
+        "entity_name": "Ana",
+        "party_type": "individual",
+        "last_report_folio": None,
+        "rfc": None,
+        "curp": None,
+    }
+
+    @contextmanager
+    def _cm():
+        yield _FakeConn([[row]])
+
+    mock_conn.side_effect = _cm
+    out = entities_monitoring_due_pg({"limit": 10})
+    assert out["total"] == 1
+    assert out["items"][0]["createdByUserId"] is None
+
+
+@mock.patch("nuwa_entities_pg._get_entity_row", return_value={"id": "e1"})
+@mock.patch("nuwa_entities_pg._conn")
+def test_alert_run_failed_allowed(mock_conn, _ent) -> None:
+    @contextmanager
+    def _cm():
+        yield _FakeConn([{"id": "a1", "created_at": None, "status": "new"}])
+
+    mock_conn.side_effect = _cm
+    out = entities_alerts_create_pg(
+        {
+            "clientId": 1,
+            "entityId": "e1",
+            "alertType": "run_failed",
+            "severity": "medium",
+            "title": "Run falló",
+        }
+    )
+    assert out["alertType"] == "run_failed"
+
+
+def test_alert_unknown_type_rejected() -> None:
+    try:
+        entities_alerts_create_pg(
+            {
+                "clientId": 1,
+                "entityId": "e1",
+                "alertType": "unknown",
+                "title": "x",
+            }
+        )
+    except SupabaseRestError as exc:
+        assert exc.status == 400
+    else:
+        raise AssertionError("expected 400")

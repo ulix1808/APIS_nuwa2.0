@@ -818,7 +818,7 @@ def entities_monitoring_due_pg(body: dict[str, Any]) -> dict[str, Any]:
                 "frequency": r["frequency"],
                 "sources": list(r["sources"] or []),
                 "nextRunAt": _iso_z(r.get("next_run_at")),
-                "createdByUserId": int(r["created_by_user_id"]),
+                "createdByUserId": int(r["created_by_user_id"]) if r.get("created_by_user_id") is not None else None,
                 "entityName": r.get("entity_name") or "",
                 "partyType": r.get("party_type"),
                 "lastReportFolio": r.get("last_report_folio"),
@@ -916,8 +916,8 @@ def entities_monitoring_run_finish_pg(body: dict[str, Any]) -> dict[str, Any]:
             last_status = "ok"
             last_error = None
         else:
-            # Retry next calendar day; do not advance full frequency on failure
-            nxt = now + timedelta(days=1)
+            # Due immediately so the next scheduler tick retries (every 8h).
+            nxt = now
             last_status = "skipped" if status == "skipped" else "error"
             last_error = str(error_message) if error_message else status
 
@@ -964,7 +964,7 @@ def entities_alerts_create_pg(body: dict[str, Any]) -> dict[str, Any]:
     client_id = int(body["clientId"])
     entity_id = str(body["entityId"])
     alert_type = str(body.get("alertType") or body.get("type") or "")
-    if alert_type not in ("risk_change", "new_match", "new_media_mention", "status_change"):
+    if alert_type not in ("risk_change", "new_match", "new_media_mention", "status_change", "run_failed"):
         raise SupabaseRestError(400, "alertType inválido")
     severity = str(body.get("severity") or "medium")
     if severity not in ("low", "medium", "high"):

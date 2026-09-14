@@ -136,9 +136,9 @@ Al guardar un reporte con `entityId`, `handler_reports` llama **`touch_entity_af
 - Actualiza `last_screening_at`, `last_report_folio`, `risk_level`.
 - Si la entidad era **`document_mention`**, la promueve a **`screening`**.
 
-En monitoreo automático, **`POST /v1/entities/monitoring/run-finish`** con `status=ok` y `reportFolio` invoca la misma función (consolida riesgo y expone `lastReportFolio` en list/get de entidades).
+En monitoreo automático, **`POST /v1/entities/monitoring/run-finish`** con `status=ok` y `reportFolio` invoca la misma función (consolida riesgo y expone `lastReportFolio` en list/get de entidades). Con `error`/`skipped`, `next_run_at` queda due de inmediato; el tick EventBridge corre cada 8 h (`00/08/16` UTC). Alertas aceptan `alertType=run_failed`.
 
-Migración base: `supabase/migrations/20260516120000_entities_monitoring.sql`.
+Migración base: `supabase/migrations/20260516120000_entities_monitoring.sql`. `run_failed`: `20260914000000_entity_alerts_run_failed.sql`.
 
 Guía front: **`docs/PROMPT_INTEGRACION_FRONT_ENTIDADES.md`**.
 
