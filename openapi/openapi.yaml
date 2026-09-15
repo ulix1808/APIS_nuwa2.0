@@ -1604,6 +1604,9 @@ paths:
                 priority: { type: string }
                 actions: { type: array, items: { type: object } }
                 notes: { type: string }
+                createdByUserId: { type: string }
+                createdByName: { type: string }
+                createdByEmail: { type: string }
       responses:
         "200":
           description: OK
@@ -1618,7 +1621,9 @@ paths:
     post:
       tags: [Escalations]
       summary: Resolver (de-escalar) por id
-      description: Marca `status=resolved` y guarda `resolution` (reason, justification, cancelledActions).
+      description: |
+        Marca `status=resolved` y guarda `resolution` (`reason`, `justification`,
+        `cancelledActions`, `resolvedBy`, `resolvedByEmail`).
       security:
         - BearerAuth: []
       requestBody:
@@ -1639,6 +1644,7 @@ paths:
                     justification: { type: string }
                     cancelledActions: { type: array, items: { type: string } }
                     resolvedBy: { type: string }
+                    resolvedByEmail: { type: string }
                     resolvedAt: { type: string }
       responses:
         "200":

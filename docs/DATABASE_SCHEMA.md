@@ -272,7 +272,8 @@ Escalaciones de compliance por tenant. Migración `20260915010000_nuwa_escalatio
 | `context` / `risk_level` / `priority` | text | Defaults screening / high / urgent. |
 | `actions` | jsonb | Lista de acciones. |
 | `status` | text | `active` \| `resolved`. |
-| `resolution` | jsonb | Motivo / justificación al resolver. |
+| `resolution` | jsonb | Motivo / justificación al resolver (`resolvedByEmail` opcional). |
+| `created_by_user_id` / `created_by_name` / `created_by_email` | text | Quién creó la escalación (migración `20260915020000_*`). |
 | `created_at` / `resolved_at` / `updated_at` | timestamptz | |
 
 ---

@@ -270,7 +270,7 @@ Entidades `document_mention` **no aparecen** en `entities/list` salvo `includeDo
 
 ### 4.5 Escalaciones de compliance
 
-`POST /v1/escalations/list|save|resolve` (`handler_escalations.py` + `nuwa_escalations_pg.py`). Tabla `nuwa_escalations` (migración `20260915010000_nuwa_escalations.sql`). JWT + tenant scope; upsert por `id` sin permitir IDs de otro `client_id`.
+`POST /v1/escalations/list|save|resolve` (`handler_escalations.py` + `nuwa_escalations_pg.py`). Tabla `nuwa_escalations` (migraciones `20260915010000_*` + `20260915020000_*` created_by). JWT + tenant scope; upsert por `id` sin permitir IDs de otro `client_id`. En save se puede enviar `createdByUserId` / `createdByName` / `createdByEmail` (no se pisan en updates).
 
 **Monitoreo continuo (worker):** el scheduler/BFF puede llamar reportes con `x-monitoring-worker-secret` (`nuwa_monitoring_worker.py`):
 

@@ -14,26 +14,29 @@ _ENSURED = False
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS nuwa_escalations (
-  id            TEXT PRIMARY KEY,
-  client_id     INTEGER NOT NULL,
-  entity_name   TEXT NOT NULL,
-  entity_id     TEXT,
-  client_name   TEXT,
-  context       TEXT NOT NULL DEFAULT 'screening',
-  risk_level    TEXT NOT NULL DEFAULT 'high',
-  actions       JSONB NOT NULL DEFAULT '[]'::jsonb,
-  notes         TEXT NOT NULL DEFAULT '',
-  priority      TEXT NOT NULL DEFAULT 'urgent',
-  status        TEXT NOT NULL DEFAULT 'active'
-                CHECK (status IN ('active', 'resolved')),
-  quick_resolve BOOLEAN NOT NULL DEFAULT false,
-  report_id     TEXT,
-  notify_email  TEXT,
-  action_path   TEXT,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  resolved_at   TIMESTAMPTZ,
-  resolution    JSONB,
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id                  TEXT PRIMARY KEY,
+  client_id           INTEGER NOT NULL,
+  entity_name         TEXT NOT NULL,
+  entity_id           TEXT,
+  client_name         TEXT,
+  context             TEXT NOT NULL DEFAULT 'screening',
+  risk_level          TEXT NOT NULL DEFAULT 'high',
+  actions             JSONB NOT NULL DEFAULT '[]'::jsonb,
+  notes               TEXT NOT NULL DEFAULT '',
+  priority            TEXT NOT NULL DEFAULT 'urgent',
+  status              TEXT NOT NULL DEFAULT 'active'
+                      CHECK (status IN ('active', 'resolved')),
+  quick_resolve       BOOLEAN NOT NULL DEFAULT false,
+  report_id           TEXT,
+  notify_email        TEXT,
+  action_path         TEXT,
+  created_by_user_id  TEXT,
+  created_by_name     TEXT,
+  created_by_email    TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at         TIMESTAMPTZ,
+  resolution          JSONB,
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """
 
@@ -48,6 +51,12 @@ CREATE INDEX IF NOT EXISTS idx_nuwa_escalations_client_status
 """,
 ]
 
+_ALTER_COLUMNS = [
+    "ALTER TABLE nuwa_escalations ADD COLUMN IF NOT EXISTS created_by_user_id TEXT",
+    "ALTER TABLE nuwa_escalations ADD COLUMN IF NOT EXISTS created_by_name TEXT",
+    "ALTER TABLE nuwa_escalations ADD COLUMN IF NOT EXISTS created_by_email TEXT",
+]
+
 
 def _ensure_table() -> None:
     global _ENSURED
@@ -56,6 +65,8 @@ def _ensure_table() -> None:
     with _conn() as conn:
         conn.execute(_CREATE_TABLE)
         for sql in _CREATE_INDEXES:
+            conn.execute(sql)
+        for sql in _ALTER_COLUMNS:
             conn.execute(sql)
         conn.commit()
     _ENSURED = True
@@ -95,7 +106,17 @@ def row_to_escalation(row: dict[str, Any]) -> dict[str, Any]:
         "reportId": str(row["report_id"]) if row.get("report_id") is not None else None,
         "notifyEmail": str(row["notify_email"]) if row.get("notify_email") is not None else None,
         "actionPath": str(row["action_path"]) if row.get("action_path") is not None else None,
-        "createdAt": _iso(row.get("created_at")) or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "createdByUserId": (
+            str(row["created_by_user_id"]) if row.get("created_by_user_id") is not None else None
+        ),
+        "createdByName": (
+            str(row["created_by_name"]) if row.get("created_by_name") is not None else None
+        ),
+        "createdByEmail": (
+            str(row["created_by_email"]) if row.get("created_by_email") is not None else None
+        ),
+        "createdAt": _iso(row.get("created_at"))
+        or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "resolvedAt": _iso(row.get("resolved_at")),
         "resolution": resolution,
     }
@@ -144,6 +165,10 @@ def save_escalation(client_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     if status not in ("active", "resolved"):
         status = "active"
 
+    created_by_name = payload.get("createdByName")
+    created_by_email = payload.get("createdByEmail")
+    created_by_user_id = payload.get("createdByUserId")
+
     row = {
         "id": esc_id,
         "clientId": str(client_id),
@@ -160,6 +185,9 @@ def save_escalation(client_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         "reportId": payload.get("reportId"),
         "notifyEmail": payload.get("notifyEmail"),
         "actionPath": payload.get("actionPath"),
+        "createdByUserId": str(created_by_user_id).strip() if created_by_user_id else None,
+        "createdByName": str(created_by_name).strip() if created_by_name else None,
+        "createdByEmail": str(created_by_email).strip().lower() if created_by_email else None,
         "createdAt": payload.get("createdAt")
         or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "resolvedAt": payload.get("resolvedAt"),
@@ -178,11 +206,13 @@ def save_escalation(client_id: int, payload: dict[str, Any]) -> dict[str, Any]:
             INSERT INTO nuwa_escalations (
               id, client_id, entity_name, entity_id, client_name, context, risk_level,
               actions, notes, priority, status, quick_resolve, report_id, notify_email,
-              action_path, created_at, resolved_at, resolution, updated_at
+              action_path, created_by_user_id, created_by_name, created_by_email,
+              created_at, resolved_at, resolution, updated_at
             ) VALUES (
               %s,%s,%s,%s,%s,%s,%s,
               %s,%s,%s,%s,%s,%s,%s,
-              %s,%s::timestamptz,%s::timestamptz,%s,NOW()
+              %s,%s,%s,%s,
+              %s::timestamptz,%s::timestamptz,%s,NOW()
             )
             ON CONFLICT (id) DO UPDATE SET
               entity_name = EXCLUDED.entity_name,
@@ -198,6 +228,9 @@ def save_escalation(client_id: int, payload: dict[str, Any]) -> dict[str, Any]:
               report_id = EXCLUDED.report_id,
               notify_email = EXCLUDED.notify_email,
               action_path = EXCLUDED.action_path,
+              created_by_user_id = COALESCE(EXCLUDED.created_by_user_id, nuwa_escalations.created_by_user_id),
+              created_by_name = COALESCE(EXCLUDED.created_by_name, nuwa_escalations.created_by_name),
+              created_by_email = COALESCE(EXCLUDED.created_by_email, nuwa_escalations.created_by_email),
               resolved_at = EXCLUDED.resolved_at,
               resolution = EXCLUDED.resolution,
               updated_at = NOW()
@@ -219,6 +252,9 @@ def save_escalation(client_id: int, payload: dict[str, Any]) -> dict[str, Any]:
                 row["reportId"],
                 row["notifyEmail"],
                 row["actionPath"],
+                row["createdByUserId"],
+                row["createdByName"],
+                row["createdByEmail"],
                 row["createdAt"],
                 row["resolvedAt"],
                 Json(row["resolution"]) if row["resolution"] is not None else None,
@@ -260,6 +296,7 @@ def resolve_escalation(
             "justification": str(res.get("justification") or ""),
             "cancelledActions": list(cancelled),
             "resolvedBy": str(res.get("resolvedBy") or ""),
+            "resolvedByEmail": str(res.get("resolvedByEmail") or "").strip().lower() or None,
             "resolvedAt": resolved_at,
         },
         "actions": actions,

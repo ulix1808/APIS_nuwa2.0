@@ -16,6 +16,10 @@ def test_openapi_parses() -> None:
     assert "/v1/escalations/list" in data["paths"]
     assert "/v1/escalations/save" in data["paths"]
     assert "/v1/escalations/resolve" in data["paths"]
+    save_props = data["paths"]["/v1/escalations/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+    assert "createdByEmail" in save_props
+    resolve_res = data["paths"]["/v1/escalations/resolve"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["resolution"]["properties"]
+    assert "resolvedByEmail" in resolve_res
     assert "/v1/clients/list" in data["paths"]
     assert "/v1/admin/users/invite" in data["paths"]
     assert "/v1/admin/users/reset-password" in data["paths"]
