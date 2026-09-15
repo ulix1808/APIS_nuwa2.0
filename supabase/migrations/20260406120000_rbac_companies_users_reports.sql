@@ -11,7 +11,10 @@ CREATE TABLE IF NOT EXISTS public.nuwa_roles (
 INSERT INTO public.nuwa_roles (slug, name) VALUES
   ('super_admin', 'Super Admin'),
   ('admin', 'Admin'),
-  ('user', 'User')
+  ('user', 'User'),
+  ('compliance_officer', 'Compliance Officer'),
+  ('analyst', 'Analyst'),
+  ('viewer', 'Viewer')
 ON CONFLICT (slug) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS public.companies (

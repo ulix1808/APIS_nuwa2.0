@@ -25,6 +25,7 @@ Referencia de **tablas y columnas** tal como se definen en `supabase/migrations/
 | `document_entity_links` | Vínculo parte/entidad extraída ↔ entidad en `entities`. |
 | `client_storage_profiles` | Prefijo S3 y cuotas por tenant para documentos. |
 | `nuwa_audit_events` | Eventos de auditoría por tenant (`client_id` numérico). |
+| `nuwa_escalations` | Escalaciones de compliance por tenant. |
 
 **Extensiones:** `pg_trgm` (búsqueda difusa sobre `chunk_text`).  
 **RLS:** activado en varias tablas desde migraciones; en RDS con rol `postgres`/service las políticas pueden no limitar al mismo modo que en Supabase — ver notas en migraciones.
@@ -53,7 +54,7 @@ Compañía = tenant. `client_id` es el identificador de negocio usado en JWT y A
 | Columna | Tipo | Notas |
 |---------|------|--------|
 | `id` | smallserial | PK. |
-| `slug` | text | **UNIQUE** (`super_admin`, `admin`, `user`). |
+| `slug` | text | **UNIQUE** (`super_admin`, `admin`, `user`, `compliance_officer`, `analyst`, `viewer`). |
 | `name` | text | Etiqueta legible. |
 
 Seed inicial en migración RBAC.
@@ -255,6 +256,24 @@ Eventos de auditoría por tenant. Migración `20260914010000_nuwa_audit_events.s
 | `metadata` | jsonb | |
 | `ip_address` | text | |
 | `created_at` | timestamptz | Índice `(client_id, created_at DESC)`. |
+
+---
+
+## `public.nuwa_escalations`
+
+Escalaciones de compliance por tenant. Migración `20260915010000_nuwa_escalations.sql`. APIs: `POST /v1/escalations/{list,save,resolve}`.
+
+| Columna | Tipo | Notas |
+|---------|------|--------|
+| `id` | text | PK (idempotente desde el BFF). |
+| `client_id` | integer | Tenant. |
+| `entity_name` | text | Nombre mostrado. |
+| `entity_id` / `report_id` | text | Referencias opcionales. |
+| `context` / `risk_level` / `priority` | text | Defaults screening / high / urgent. |
+| `actions` | jsonb | Lista de acciones. |
+| `status` | text | `active` \| `resolved`. |
+| `resolution` | jsonb | Motivo / justificación al resolver. |
+| `created_at` / `resolved_at` / `updated_at` | timestamptz | |
 
 ---
 

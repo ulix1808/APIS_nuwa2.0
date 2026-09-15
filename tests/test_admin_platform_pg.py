@@ -32,9 +32,36 @@ def test_require_super_admin_denies() -> None:
 def test_role_mapping() -> None:
     assert _map_role_slug("super_admin") == "master"
     assert _map_role_slug("user") == "analyst"
-    assert _map_app_role_to_id("master") == 1
-    assert _map_app_role_to_id("admin") == 2
-    assert _map_app_role_to_id("analyst") == 3
+    assert _map_role_slug("compliance_officer") == "compliance_officer"
+
+    class _Conn:
+        def __init__(self, rows: list[dict[str, Any]]) -> None:
+            self._rows = rows
+
+        def execute(self, sql: str, params: Any = None) -> Any:
+            self.last_sql = sql
+            self.last_params = params
+            parent = self
+
+            class _Res:
+                def fetchall(self_inner) -> list[dict[str, Any]]:
+                    return list(parent._rows)
+
+                def fetchone(self_inner) -> dict[str, Any] | None:
+                    return parent._rows[0] if parent._rows else None
+
+            return _Res()
+
+    assert _map_app_role_to_id(_Conn([{"id": 1, "slug": "super_admin"}]), "master") == 1
+    assert _map_app_role_to_id(_Conn([{"id": 2, "slug": "admin"}]), "admin") == 2
+    assert _map_app_role_to_id(_Conn([{"id": 3, "slug": "user"}]), "analyst") == 3
+    assert (
+        _map_app_role_to_id(
+            _Conn([{"id": 9, "slug": "compliance_officer"}]),
+            "compliance_officer",
+        )
+        == 9
+    )
 
 
 def test_user_api_shape() -> None:
@@ -165,6 +192,7 @@ def test_clients_list_returns_stats(mock_conn) -> None:
 def test_admin_users_invite_returns_temp_password(mock_conn, _gen, _hash) -> None:
     mock_conn.side_effect = lambda: _fake_conn(
         [
+            [{"id": 3, "slug": "user"}],  # role lookup
             {"name": "Nuwa"},
             None,
             {
@@ -197,6 +225,7 @@ def test_admin_users_invite_returns_temp_password(mock_conn, _gen, _hash) -> Non
 def test_admin_users_invite_email_exists(mock_conn) -> None:
     mock_conn.side_effect = lambda: _fake_conn(
         [
+            [{"id": 3, "slug": "user"}],  # role lookup
             {"name": "Nuwa"},
             {"id": 1},
         ]

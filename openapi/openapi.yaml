@@ -58,6 +58,10 @@ tags:
     description: Reportes post-búsqueda (tabla `reports`, JSON extensible)
   - name: Audit
     description: Registro de auditoría por `client_id` (`nuwa_audit_events`). El BFF solo hace proxy.
+  - name: Escalations
+    description: |
+      Escalaciones de compliance por tenant (`nuwa_escalations`).
+      JWT obligatorio; acotado al `cid`. Lambda reports (`handler_escalations`).
   - name: Entities
     description: |
       Entidades de negocio (Persona Física / Persona Moral) por `client_id`. Match pre-consulta (30 días),
@@ -1550,6 +1554,99 @@ paths:
           description: OK
         "500":
           $ref: "#/components/responses/ServerError"
+
+  /v1/escalations/list:
+    post:
+      tags: [Escalations]
+      summary: Listar escalaciones del tenant
+      description: Solo filas de `nuwa_escalations` del `clientId` del JWT (o body alineado).
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientId: { type: integer }
+                limit: { type: integer, default: 500, maximum: 500 }
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/escalations/save:
+    post:
+      tags: [Escalations]
+      summary: Crear o actualizar escalación
+      description: |
+        Upsert por `id`. Requiere `id` + `entityName`. Body puede ser el objeto escalación
+        o `{ clientId, escalation: { ... } }`. No permite sobrescribir IDs de otro tenant.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientId: { type: integer }
+                escalation: { type: object }
+                id: { type: string }
+                entityName: { type: string }
+                entityId: { type: string }
+                status: { type: string, enum: [active, resolved] }
+                riskLevel: { type: string }
+                priority: { type: string }
+                actions: { type: array, items: { type: object } }
+                notes: { type: string }
+      responses:
+        "200":
+          description: OK
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/escalations/resolve:
+    post:
+      tags: [Escalations]
+      summary: Resolver (de-escalar) por id
+      description: Marca `status=resolved` y guarda `resolution` (reason, justification, cancelledActions).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                clientId: { type: integer }
+                id: { type: string }
+                resolution:
+                  type: object
+                  properties:
+                    reason: { type: string }
+                    reasonLabel: { type: string }
+                    justification: { type: string }
+                    cancelledActions: { type: array, items: { type: string } }
+                    resolvedBy: { type: string }
+                    resolvedAt: { type: string }
+      responses:
+        "200":
+          description: OK
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /v1/audit/create:
     post:

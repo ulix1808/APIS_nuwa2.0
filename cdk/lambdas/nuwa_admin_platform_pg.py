@@ -17,17 +17,28 @@ ROLE_SLUG_TO_APP: dict[str, str] = {
     "master": "master",
     "admin": "admin",
     "compliance_officer": "compliance_officer",
+    "compliance": "compliance_officer",
     "analyst": "analyst",
+    "analista": "analyst",
     "viewer": "viewer",
     "user": "analyst",
 }
 
-APP_ROLE_TO_ROLE_ID: dict[str, int] = {
-    "master": 1,
-    "compliance_officer": 1,
-    "admin": 2,
-    "analyst": 3,
-    "viewer": 3,
+# Preferred nuwa_roles.slug candidates per app role (first match / insert wins).
+APP_ROLE_SLUG_CANDIDATES: dict[str, list[str]] = {
+    "master": ["super_admin", "master"],
+    "compliance_officer": ["compliance_officer", "compliance"],
+    "admin": ["admin", "administrator"],
+    "analyst": ["analyst", "analista", "user"],
+    "viewer": ["viewer", "read_only", "visualizador"],
+}
+
+APP_ROLE_DISPLAY_NAME: dict[str, str] = {
+    "master": "Super Admin",
+    "compliance_officer": "Compliance Officer",
+    "admin": "Admin",
+    "analyst": "Analyst",
+    "viewer": "Viewer",
 }
 
 
@@ -54,8 +65,47 @@ def _map_role_slug(slug: str | None) -> str:
     return ROLE_SLUG_TO_APP.get((slug or "user").lower(), "analyst")
 
 
-def _map_app_role_to_id(role: str) -> int:
-    return APP_ROLE_TO_ROLE_ID.get(role, 3)
+def _normalize_app_role(role: str | None) -> str:
+    raw = (role or "analyst").strip().lower().replace("-", "_")
+    return ROLE_SLUG_TO_APP.get(raw, raw if raw in APP_ROLE_SLUG_CANDIDATES else "analyst")
+
+
+def _resolve_role_id(conn: Any, role: str) -> int:
+    app_role = _normalize_app_role(role)
+    slugs = APP_ROLE_SLUG_CANDIDATES.get(app_role) or APP_ROLE_SLUG_CANDIDATES["analyst"]
+
+    def lookup() -> int | None:
+        rows = conn.execute(
+            "SELECT id, slug FROM nuwa_roles WHERE LOWER(slug) = ANY(%s)",
+            (list(slugs),),
+        ).fetchall()
+        rank = {s.lower(): i for i, s in enumerate(slugs)}
+        rows = sorted(rows, key=lambda r: rank.get(str(r["slug"]).lower(), 99))
+        if not rows:
+            return None
+        rid = int(rows[0]["id"])
+        return rid if rid > 0 else None
+
+    found = lookup()
+    if found is not None:
+        return found
+
+    preferred = slugs[0]
+    conn.execute(
+        """
+        INSERT INTO nuwa_roles (slug, name) VALUES (%s, %s)
+        ON CONFLICT (slug) DO NOTHING
+        """,
+        (preferred, APP_ROLE_DISPLAY_NAME.get(app_role, preferred)),
+    )
+    created = lookup()
+    if created is not None:
+        return created
+    raise SupabaseRestError(502, f"role_not_configured:{app_role}")
+
+
+def _map_app_role_to_id(conn: Any, role: str) -> int:
+    return _resolve_role_id(conn, role)
 
 
 def _iso_date(value: Any) -> str | None:
@@ -407,9 +457,9 @@ def admin_users_invite(body: dict[str, Any]) -> dict[str, Any]:
 
     temp_password = _generate_temp_password()
     password_hash = hash_password(temp_password)
-    role_id = _map_app_role_to_id(role)
 
     with _conn() as conn:
+        role_id = _map_app_role_to_id(conn, role)
         company = conn.execute(
             "SELECT name FROM companies WHERE client_id = %s",
             (client_id,),
@@ -473,21 +523,22 @@ def admin_users_update_platform(body: dict[str, Any]) -> dict[str, Any]:
     uid = int(body["targetUserId"])
     sets: list[str] = []
     vals: list[Any] = []
+    role_raw = str(body["role"]) if "role" in body else None
     if "name" in body:
         sets.append("full_name = %s")
         vals.append(body["name"])
-    if "role" in body:
-        sets.append("role_id = %s")
-        vals.append(_map_app_role_to_id(str(body["role"])))
     if "status" in body:
         st = str(body["status"])
         sets.append("is_active = %s")
         vals.append(st in ("active", "invited"))
-    if not sets:
+    if not sets and role_raw is None:
         raise SupabaseRestError(400, "Nada que actualizar.")
-    sets.append("updated_at = NOW()")
-    vals.append(uid)
     with _conn() as conn:
+        if role_raw is not None:
+            sets.append("role_id = %s")
+            vals.append(_map_app_role_to_id(conn, role_raw))
+        sets.append("updated_at = NOW()")
+        vals.append(uid)
         row = conn.execute(
             f"UPDATE nuwa_users SET {', '.join(sets)} WHERE id = %s RETURNING id, email, full_name, client_id, is_active, role_id",
             vals,

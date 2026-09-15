@@ -495,6 +495,10 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             import handler_audit
 
             return handler_audit.handler(event, context)
+        if "/escalations/" in path:
+            import handler_escalations
+
+            return handler_escalations.handler(event, context)
         return _resp(404, {"message": "Ruta no encontrada", "method": method, "path": path})
     except SupabaseRestError as e:
         return _resp(

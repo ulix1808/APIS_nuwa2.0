@@ -17,6 +17,7 @@ Referencia de lo implementado en el backend (Lambdas Python + Postgres/RDS + S3)
 | **Ingest chunks** | `*-lambda-chunks` | `POST /v1/chunks/ingest` | Desplegado prod |
 | **Reportes** | `*-lambda-reports` | `/v1/reports/*` | Desplegado prod (+ vínculo entidad) |
 | **Auditoría** | `*-lambda-reports` | `/v1/audit/create`, `/v1/audit/list` | Desplegado prod |
+| **Escalaciones** | `*-lambda-reports` | `/v1/escalations/{list,save,resolve}` | Desplegado prod |
 | **Admin plataforma** | `*-lambda-admin` | `/v1/clients/*`, `/v1/admin/users/invite`, `reset-password`, … | Desplegado prod — ver [`ADMIN_PLATFORM_API.md`](./ADMIN_PLATFORM_API.md) |
 | **Match / vínculos** | Lógica compartida | `entity_helpers.find_matches` | Usado en entidades y documentos |
 
@@ -266,6 +267,10 @@ Entidades `document_mention` **no aparecen** en `entities/list` salvo `includeDo
 ### 4.4 Auditoría de plataforma
 
 `POST /v1/audit/create` y `GET/POST /v1/audit/list` viven en la Lambda **reports** (`handler_audit.py` + `nuwa_audit_pg.py`). Tabla `nuwa_audit_events` (migración `20260914010000_nuwa_audit_events.sql`). JWT obligatorio; el tenant es el `cid` del token. Deduplica login/logout 5 min y el resto 2 min.
+
+### 4.5 Escalaciones de compliance
+
+`POST /v1/escalations/list|save|resolve` (`handler_escalations.py` + `nuwa_escalations_pg.py`). Tabla `nuwa_escalations` (migración `20260915010000_nuwa_escalations.sql`). JWT + tenant scope; upsert por `id` sin permitir IDs de otro `client_id`.
 
 **Monitoreo continuo (worker):** el scheduler/BFF puede llamar reportes con `x-monitoring-worker-secret` (`nuwa_monitoring_worker.py`):
 

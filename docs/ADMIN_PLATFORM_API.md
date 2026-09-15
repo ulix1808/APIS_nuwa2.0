@@ -93,7 +93,8 @@ Body: `{ "targetClientId" }` → pone `clients.tokens_used = 0`.
 
 Response plataforma: `{ "success": true, "users": [{ "id", "email", "name", "role", "status", "clientId", "companyName" }] }`
 
-Roles en respuesta (app): `master`, `admin`, `analyst`, … mapeados desde `nuwa_roles.slug`.
+Roles en respuesta (app): `master`, `admin`, `compliance_officer`, `analyst`, `viewer` mapeados desde `nuwa_roles.slug`.
+Invite/update resuelven `role_id` por slug en BD (no IDs fijos); migraciones `20260406120000_*` + `20260915000000_nuwa_roles_extended.sql`.
 
 ### POST /v1/admin/users/invite
 
