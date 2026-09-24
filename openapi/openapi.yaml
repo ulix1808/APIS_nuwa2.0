@@ -1246,6 +1246,8 @@ paths:
         **Auth worker (monitoreo continuo):** header `x-monitoring-worker-secret` (o Bearer con el mismo valor, sin JWT).
         Solo consulta **por folio**: requiere `clientId` y `folio` (no listados paginados). Valida que el reporte pertenezca al tenant.
         Params pueden ir en query o en body JSON en `POST`.
+
+        Cada ítem del listado incluye `groupId`, `groupName` y `groupRole` cuando existen: primero la columna de `reports`, y si está vacía el valor en `report_json.metadatos`, `apiResponse` o `search_context`.
       security:
         - BearerAuth: []
       parameters:
@@ -1556,6 +1558,7 @@ paths:
       description: |
         JWT de usuario o **`x-monitoring-worker-secret`** (monitoreo continuo).
         Con worker auth, `clientId` en body es obligatorio y debe coincidir con el reporte (`folio`).
+        `groupId`, `groupName` y `groupRole` pueden ir en la raíz o en `report.metadatos`. Si esta actualización no los manda, no se borra el valor ya guardado.
       security:
         - BearerAuth: []
       requestBody:
@@ -2164,6 +2167,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TokensLedgerResponse"
+
+  /v1/tokens/usage-by-user:
+    post:
+      tags: [AdminPlatform]
+      operationId: tokensUsageByUser
+      summary: Tokens cobrados por usuario en el periodo
+      description: |
+        JWT. `super_admin`, `admin` y `master` ven a toda la empresa (`scope: company`).
+        Otro rol solo ve su propio consumo (`scope: self`).
+        `super_admin` puede pasar `targetClientId`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokensUsageByUserRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokensUsageByUserResponse"
 
   /v1/tokens/consume:
     post:
@@ -2855,6 +2883,9 @@ components:
         createdAt: { type: string, format: date-time, nullable: true }
         updatedAt: { type: string, format: date-time, nullable: true }
         status: { type: string, enum: [active, archived, deleted] }
+        groupId: { type: string, nullable: true }
+        groupName: { type: string, nullable: true }
+        groupRole: { type: string, nullable: true }
 
     ReportsGetListResponse:
       type: object
@@ -3028,6 +3059,9 @@ components:
             clientId:
               type: integer
               description: Opcional; desambiguar si el mismo folio existe en otro tenant
+            groupId: { type: string }
+            groupName: { type: string }
+            groupRole: { type: string }
             report:
               $ref: "#/components/schemas/ReportEditorialPayload"
             reporte:
@@ -3493,6 +3527,38 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TokensLedgerItem"
+
+    TokensUsageByUserRequest:
+      allOf:
+        - $ref: "#/components/schemas/TokensActorRequest"
+        - type: object
+          properties:
+            sinceDays:
+              type: integer
+              minimum: 1
+              maximum: 366
+              default: 30
+
+    TokensUsageByUserItem:
+      type: object
+      required: [userId, email, name, tokens]
+      properties:
+        userId: { type: integer }
+        email: { type: string }
+        name: { type: string }
+        tokens: { type: integer }
+
+    TokensUsageByUserResponse:
+      type: object
+      required: [success, sinceDays, scope, users]
+      properties:
+        success: { type: boolean }
+        sinceDays: { type: integer }
+        scope: { type: string, enum: [company, self] }
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokensUsageByUserItem"
 
     TokensConsumeRequest:
       allOf:

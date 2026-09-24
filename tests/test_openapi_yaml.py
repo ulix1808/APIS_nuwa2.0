@@ -24,6 +24,9 @@ def test_openapi_parses() -> None:
     assert "/v1/tokens/balance" in data["paths"]
     assert "/v1/tokens/ledger" in data["paths"]
     assert "/v1/tokens/consume" in data["paths"]
+    assert "/v1/tokens/usage-by-user" in data["paths"]
+    summary = data["components"]["schemas"]["ReportSummaryItem"]["properties"]
+    assert "groupName" in summary
     assert "operatingCountries" in data["components"]["schemas"]["PlatformClient"]["properties"]
     audit_create = data["paths"]["/v1/audit/create"]["post"]["description"]
     assert "x-monitoring-worker-secret" in audit_create

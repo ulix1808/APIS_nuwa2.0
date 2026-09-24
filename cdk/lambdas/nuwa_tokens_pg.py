@@ -111,6 +111,51 @@ def tokens_ledger(actor: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]
     return {"success": True, "items": items}
 
 
+def tokens_usage_by_user(actor: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+    """Tokens charged this period, grouped by the user who consumed them."""
+    client_id = resolve_token_client_id(actor, body)
+    try:
+        since_days = int(body.get("sinceDays") or 30)
+    except (TypeError, ValueError):
+        since_days = 30
+    since_days = min(366, max(1, since_days))
+    role = str(actor.get("role_slug") or "")
+    full_company = role in ("super_admin", "admin", "master")
+    actor_id = int(actor["id"])
+    sql = """
+    SELECT u.id AS user_id, u.email, u.full_name,
+           COALESCE(SUM(l.cost), 0)::int AS tokens
+    FROM nuwa_users u
+    LEFT JOIN token_ledger l
+      ON l.user_id = u.id
+     AND l.client_id = u.client_id
+     AND l.created_at >= NOW() - make_interval(days => %s)
+    WHERE u.client_id = %s
+    """
+    params: list[Any] = [since_days, client_id]
+    if not full_company:
+        sql += " AND u.id = %s"
+        params.append(actor_id)
+    sql += " GROUP BY u.id, u.email, u.full_name ORDER BY tokens DESC, u.full_name ASC"
+    with _conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    users = [
+        {
+            "userId": int(row["user_id"]),
+            "email": row.get("email") or "",
+            "name": row.get("full_name") or row.get("email") or "",
+            "tokens": int(row.get("tokens") or 0),
+        }
+        for row in rows
+    ]
+    return {
+        "success": True,
+        "sinceDays": since_days,
+        "scope": "company" if full_company else "self",
+        "users": users,
+    }
+
+
 def _bump_usage(conn: Any, client_id: int, action: str, cost: int) -> None:
     column = _USAGE_COLUMN.get(action)
     if not column:

@@ -34,6 +34,7 @@ def _load_handler_admin():
         SupabaseConfigError=Exception,
         ensure_data_backend=lambda: None,
         is_database_mode=lambda: True,
+        get_database_config=lambda: {},
     )
     _install_stub(
         "nuwa_errors",
@@ -57,7 +58,11 @@ def _load_handler_admin():
         log_await=lambda *a, **k: None,
         log_done=lambda *a, **k: None,
     )
-    _install_stub("nuwa_password", hash_password=lambda p: f"hash:{p}")
+    _install_stub(
+        "nuwa_password",
+        hash_password=lambda p: f"hash:{p}",
+        verify_password=lambda plain, stored: True,
+    )
     _install_stub("nuwa_rbac", can_manage_company=lambda *a: True, can_manage_users=lambda *a: True)
     _install_stub("nuwa_supabase", rest_json=lambda *a, **k: [], fetch_user_with_role=lambda **k: None)
     _install_stub(
@@ -192,6 +197,28 @@ def test_tokens_balance_route_for_tenant_admin() -> None:
     assert out["statusCode"] == 200
     assert json.loads(out["body"])["remaining"] == 9
     mock_bal.assert_called_once()
+
+
+def test_tokens_usage_by_user_route_for_admin() -> None:
+    ha = _load_handler_admin()
+    admin_actor = {
+        "id": 9,
+        "client_id": 4,
+        "role_slug": "admin",
+        "email": "a@b.com",
+        "full_name": "Ana",
+    }
+    with mock.patch.object(ha, "fetch_user_with_role", return_value=admin_actor):
+        with mock.patch.object(
+            ha,
+            "tokens_usage_by_user",
+            return_value={"success": True, "sinceDays": 30, "scope": "company", "users": []},
+        ) as mock_usage:
+            body = {"clientId": 4, "userId": 9, "sinceDays": 30}
+            out = ha.handler(_event("/v1/tokens/usage-by-user", body), None)
+    assert out["statusCode"] == 200
+    assert json.loads(out["body"])["scope"] == "company"
+    mock_usage.assert_called_once()
 
 
 def test_clients_list_forbidden_for_admin() -> None:

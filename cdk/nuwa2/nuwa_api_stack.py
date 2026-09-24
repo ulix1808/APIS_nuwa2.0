@@ -601,6 +601,7 @@ class NuwaApiStack(Stack):
         tokens = v1.add_resource("tokens")
         tokens.add_resource("balance").add_method("POST", admin_integration, api_key_required=False)
         tokens.add_resource("ledger").add_method("POST", admin_integration, api_key_required=False)
+        tokens.add_resource("usage-by-user").add_method("POST", admin_integration, api_key_required=False)
         tokens.add_resource("consume").add_method("POST", admin_integration, api_key_required=False)
 
         docs = v1.add_resource("documents")

@@ -35,7 +35,7 @@ from nuwa_admin_platform_pg import (
     team_users_list,
 )
 from nuwa_password import hash_password
-from nuwa_tokens_pg import tokens_balance, tokens_consume, tokens_ledger
+from nuwa_tokens_pg import tokens_balance, tokens_consume, tokens_ledger, tokens_usage_by_user
 from nuwa_rbac import can_manage_company, can_manage_users
 from nuwa_supabase import fetch_user_with_role, rest_json
 
@@ -395,6 +395,8 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _resp(200, tokens_balance(actor, body))
         if path.endswith("/tokens/ledger"):
             return _resp(200, tokens_ledger(actor, body))
+        if path.endswith("/tokens/usage-by-user"):
+            return _resp(200, tokens_usage_by_user(actor, body))
         if path.endswith("/tokens/consume"):
             status, payload = tokens_consume(actor, body)
             return _resp(status, payload)

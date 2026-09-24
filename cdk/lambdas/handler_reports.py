@@ -116,7 +116,7 @@ def _select_cols_for_list() -> str:
         "nivel_riesgo,nivel_riesgo_numerico,total_listas_original,total_listas_activas,"
         "total_descartadas,es_actualizacion,total_listas,total_menciones,grok_resumen,"
         "grok_falsos_positivos,grok_confirmados,created_at,updated_at,status,"
-        "report_json"
+        "group_id,group_name,group_role,search_context,report_json"
     )
 
 
@@ -421,11 +421,24 @@ def handle_update(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]
 
     meta = extract_report_metadata(reporte)
     db_meta = metadata_to_db_row(meta)
+    metadatos = reporte.get("metadatos") if isinstance(reporte.get("metadatos"), dict) else {}
     patch = {
         "report_json": reporte,
         "updated_at": now_iso_z(),
         **db_meta,
     }
+    # No borrar un group_name ya guardado si esta actualización no lo manda.
+    for key, col in (
+        ("groupId", "group_id"),
+        ("groupName", "group_name"),
+        ("groupRole", "group_role"),
+    ):
+        raw = body.get(key)
+        if raw is None:
+            raw = metadatos.get(key)
+        if raw is None or str(raw).strip() == "":
+            continue
+        patch[col] = str(raw).strip()
     rid = existing["id"]
     out = rest_json("PATCH", "reports", query=f"id=eq.{rid}", body=patch)
     updated = out[0] if isinstance(out, list) else out

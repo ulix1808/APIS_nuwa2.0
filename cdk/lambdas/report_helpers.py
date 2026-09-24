@@ -88,9 +88,57 @@ def metadata_to_db_row(meta: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def group_fields_from_row(row: dict[str, Any]) -> dict[str, str]:
+    """Nombre de grupo durable: columna Postgres, y si falta, el JSON del reporte.
+
+    Redis del screening expira. El listado tiene que poder mostrar Grupo sin ese cache.
+    """
+    reporte = row.get("report_json") if isinstance(row.get("report_json"), dict) else {}
+    metadatos = reporte.get("metadatos") if isinstance(reporte.get("metadatos"), dict) else {}
+    api = reporte.get("apiResponse") if isinstance(reporte.get("apiResponse"), dict) else {}
+    search = row.get("search_context") if isinstance(row.get("search_context"), dict) else {}
+
+    group_id = _first_text(
+        row.get("group_id"),
+        metadatos.get("groupId"),
+        api.get("groupId"),
+        search.get("groupId"),
+    )
+    group_name = _first_text(
+        row.get("group_name"),
+        metadatos.get("groupName"),
+        api.get("groupName"),
+        search.get("groupName"),
+    )
+    group_role = _first_text(
+        row.get("group_role"),
+        metadatos.get("groupRole"),
+        api.get("groupRole"),
+        search.get("groupRole"),
+    )
+    out: dict[str, str] = {}
+    if group_id:
+        out["groupId"] = group_id
+    if group_name:
+        out["groupName"] = group_name
+    if group_role:
+        out["groupRole"] = group_role
+    return out
+
+
 def db_row_to_api_summary(row: dict[str, Any]) -> dict[str, Any]:
     """Resumen para listados (camelCase). `status` es el ciclo de vida del registro (active/archived/deleted)."""
-    return {
+    summary = {
         "folio": row.get("folio"),
         "clientId": row.get("client_id"),
         "userId": row.get("created_by_user_id"),
@@ -113,6 +161,8 @@ def db_row_to_api_summary(row: dict[str, Any]) -> dict[str, Any]:
         "updatedAt": row.get("updated_at"),
         "status": row.get("status"),
     }
+    summary.update(group_fields_from_row(row))
+    return summary
 
 
 def encode_next_key(offset: int) -> str:
