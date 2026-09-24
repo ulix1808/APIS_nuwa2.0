@@ -27,6 +27,11 @@ def test_openapi_parses() -> None:
     assert "operatingCountries" in data["components"]["schemas"]["PlatformClient"]["properties"]
     audit_create = data["paths"]["/v1/audit/create"]["post"]["description"]
     assert "x-monitoring-worker-secret" in audit_create
+    assert "/v1/auth/password/change" in data["paths"]
+    assert "/v1/team/users/list" in data["paths"]
+    change = data["paths"]["/v1/auth/password/change"]["post"]
+    assert change["security"] == [{"BearerAuth": []}]
+    assert "mustChangePassword" in data["components"]["schemas"]["ChangeOwnPasswordResponse"]["properties"]
     assert "/v1/admin/users/invite" in data["paths"]
     assert "/v1/admin/users/reset-password" in data["paths"]
     entity = data["components"]["schemas"]["EntitySummary"]["properties"]

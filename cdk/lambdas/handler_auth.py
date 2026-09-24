@@ -208,6 +208,28 @@ def _login(body: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _change_password(event: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+    from nuwa_api_auth import require_jwt
+    from nuwa_jwt import jwt_int
+    from nuwa_pg_dispatch import change_own_password
+
+    claims = require_jwt(event)
+    if isinstance(claims, str):
+        return _resp(401, {"code": "UNAUTHORIZED", "message": claims})
+    try:
+        user_id = jwt_int(claims, "sub")
+    except (TypeError, ValueError):
+        return _resp(401, {"code": "UNAUTHORIZED", "message": "Token inválido."})
+    return _resp(
+        200,
+        change_own_password(
+            user_id=user_id,
+            current_password=str(body.get("currentPassword") or ""),
+            new_password=str(body.get("newPassword") or ""),
+        ),
+    )
+
+
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     log_handler_enter("auth", event, context)
     method = (event.get("httpMethod") or "POST").upper()
@@ -223,10 +245,15 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return _resp(502, _aws_client_error_body(e))
 
     path = (event.get("path") or "").rstrip("/")
-    if method != "POST" or not path.endswith("/auth/login"):
+    if method != "POST":
         return _resp(404, {"code": "NOT_FOUND", "message": path or "/"})
 
     try:
+        if path.endswith("/auth/password/change"):
+            log_phase("auth_password_change", "start")
+            return _change_password(event, _body(event))
+        if not path.endswith("/auth/login"):
+            return _resp(404, {"code": "NOT_FOUND", "message": path or "/"})
         log_phase("auth_login", "start _login")
         return _login(_body(event))
     except SupabaseRestError as e:

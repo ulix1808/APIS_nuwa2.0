@@ -32,6 +32,7 @@ from nuwa_admin_platform_pg import (
     clients_suspend,
     clients_update,
     require_super_admin,
+    team_users_list,
 )
 from nuwa_password import hash_password
 from nuwa_tokens_pg import tokens_balance, tokens_consume, tokens_ledger
@@ -386,6 +387,9 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             if actor["role_slug"] == "super_admin":
                 return _resp(200, admin_users_delete_platform(body, fallback_user_id=int(actor["id"])))
             return users_delete(actor, body)
+
+        if path.endswith("/team/users/list"):
+            return _resp(200, team_users_list(actor, body))
 
         if path.endswith("/tokens/balance"):
             return _resp(200, tokens_balance(actor, body))

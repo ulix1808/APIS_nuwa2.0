@@ -114,6 +114,58 @@ paths:
         "503":
           description: Backend de datos no configurado
 
+  /v1/auth/password/change:
+    post:
+      tags: [Auth]
+      summary: Cambia la contraseña del usuario del token y apaga mustChangePassword
+      description: |
+        Requiere Bearer. El usuario es el claim `sub`. No acepta otro user id.
+        Guarda el hash nuevo y deja `nuwa_users.must_change_password = false`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeOwnPasswordRequest"
+      responses:
+        "200":
+          description: Contraseña actualizada y flag apagado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangeOwnPasswordResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Token inválido o contraseña actual incorrecta
+
+  /v1/team/users/list:
+    post:
+      tags: [AdminPlatform]
+      summary: Directorio de usuarios de la empresa del actor
+      description: |
+        Cualquier rol con JWT. Solo devuelve usuarios de `cid` del token.
+        `targetClientId` de otra empresa responde 403. No incluye hash de contraseña.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamUsersListRequest"
+      responses:
+        "200":
+          description: Lista users de la empresa del actor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamUsersListResponse"
+        "403":
+          description: targetClientId de otra empresa
+
   /v1/sources:
     post:
       tags: [Sources]
@@ -3058,6 +3110,45 @@ components:
             details:
               type: object
               additionalProperties: true
+
+    ChangeOwnPasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+        newPassword:
+          type: string
+          minLength: 8
+
+    ChangeOwnPasswordResponse:
+      type: object
+      required: [success, mustChangePassword]
+      properties:
+        success: { type: boolean }
+        mustChangePassword: { type: boolean, enum: [false] }
+
+    TeamUsersListRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          properties:
+            targetClientId:
+              type: integer
+              description: Solo se acepta si coincide con el clientId del actor.
+            search: { type: string }
+            status: { type: string }
+            role: { type: string }
+
+    TeamUsersListResponse:
+      type: object
+      required: [success, users]
+      properties:
+        success: { type: boolean }
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlatformAdminUser"
 
     LoginRequest:
       type: object

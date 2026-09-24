@@ -17,6 +17,7 @@ from psycopg.types.json import Json
 
 from nuwa_config import get_database_config
 from nuwa_errors import SupabaseRestError
+from nuwa_password import hash_password, verify_password
 from nuwa_obs_log import log_await, log_done, log_phase
 from source_risk_level import RISK_LEVEL_API_MESSAGE, is_valid_source_risk_level
 from chunk_normalize import prepare_chunk_text_for_storage
@@ -145,6 +146,38 @@ def fetch_login_candidates(email: str) -> list[dict[str, Any]]:
     with _conn() as conn:
         rows = conn.execute(sql, (email,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def change_own_password(*, user_id: int, current_password: str, new_password: str) -> dict[str, Any]:
+    """Replace the actor's password and clear must_change_password. Does not accept another user id."""
+    if not current_password:
+        raise SupabaseRestError(400, "currentPassword requerido.")
+    if not isinstance(new_password, str) or len(new_password) < 8:
+        raise SupabaseRestError(400, "password mínimo 8 caracteres.")
+
+    with _conn() as conn:
+        row = conn.execute(
+            """
+            SELECT id, password_hash, COALESCE(is_active, true) AS is_active
+            FROM public.nuwa_users
+            WHERE id = %s
+            """,
+            (user_id,),
+        ).fetchone()
+        if not row or not row.get("is_active", True):
+            raise SupabaseRestError(404, "Usuario no encontrado.")
+        if not verify_password(current_password, row.get("password_hash") or ""):
+            raise SupabaseRestError(401, "Credenciales inválidas.")
+        conn.execute(
+            """
+            UPDATE public.nuwa_users
+            SET password_hash = %s, must_change_password = false, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (hash_password(new_password), user_id),
+        )
+        conn.commit()
+    return {"success": True, "mustChangePassword": False}
 
 
 def fetch_user_with_role_pg(*, user_id: int) -> dict[str, Any] | None:

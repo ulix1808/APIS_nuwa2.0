@@ -214,3 +214,25 @@ def test_clients_list_forbidden_for_admin() -> None:
                 out = ha.handler(_event("/v1/clients/list", body), None)
     assert out["statusCode"] == 403
     mock_clients_list.assert_not_called()
+
+
+def test_team_users_list_route_for_analyst() -> None:
+    ha = _load_handler_admin()
+    analyst = {
+        "id": 12,
+        "client_id": 4,
+        "role_slug": "analyst",
+        "email": "ana@sadah.com",
+        "full_name": "Ana",
+    }
+    with mock.patch.object(ha, "fetch_user_with_role", return_value=analyst):
+        with mock.patch.object(
+            ha,
+            "team_users_list",
+            return_value={"success": True, "users": [{"id": 12, "role": "analyst"}]},
+        ) as mock_list:
+            body = {"clientId": 4, "userId": 12}
+            out = ha.handler(_event("/v1/team/users/list", body), None)
+    assert out["statusCode"] == 200
+    assert json.loads(out["body"])["users"][0]["role"] == "analyst"
+    mock_list.assert_called_once_with(analyst, body)

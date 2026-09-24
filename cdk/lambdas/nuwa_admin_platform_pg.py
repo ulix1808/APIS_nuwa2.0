@@ -514,6 +514,27 @@ def admin_users_list_platform(body: dict[str, Any]) -> dict[str, Any]:
     return {"success": True, "users": users}
 
 
+def team_users_list(actor: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+    """Read-only directory of the actor's own company. Any role may call it."""
+    actor_client = int(actor["client_id"])
+    raw_target = body.get("targetClientId")
+    if raw_target is not None and str(raw_target).strip() != "":
+        try:
+            requested = int(raw_target)
+        except (TypeError, ValueError):
+            raise SupabaseRestError(400, "targetClientId inválido.")
+        if requested != actor_client:
+            raise SupabaseRestError(403, "Sin permiso para listar otra empresa.")
+    return admin_users_list_platform(
+        {
+            "targetClientId": actor_client,
+            "search": body.get("search"),
+            "status": body.get("status"),
+            "role": body.get("role"),
+        }
+    )
+
+
 def admin_users_invite(body: dict[str, Any]) -> dict[str, Any]:
     email = str(body["email"]).strip().lower()
     name = str(body.get("name") or body.get("fullName") or "").strip()

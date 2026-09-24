@@ -27,6 +27,11 @@ Compañías **antiguas** con `apigw_key_secret` en texto plano: al descifrar, si
 - Si el correo está en la plataforma (`clientId` 1, rol master) y en una sola empresa de producto, entra a la empresa de producto. `clientId: 1` en el body no cambia eso.
 - Respuesta **200:** `user` (incluye `mustChangePassword`, leído y no borrado en este request), `company`, **`accessToken`** (JWT de esa cuenta), `tokenType`, `expiresIn`.
 - Contraseñas: **pbkdf2_sha256** (`nuwa_password`).
+- **`POST /v1/auth/password/change`** (Bearer): el usuario del token cambia su contraseña y el flag queda en `false`.
+
+### Directorio del equipo (`POST /v1/team/users/list`)
+
+Cualquier rol autenticado lista los usuarios de su propia empresa (compartir reporte, escalar). No abre el listado admin de otras compañías.
 
 ### Diagrama: login y llamadas posteriores
 

@@ -107,3 +107,28 @@ def test_login_returns_product_account_and_password_flag(mock_rows, mock_rest, _
     assert mock_mint.call_args.kwargs["role_slug"] == "admin"
     company_query = mock_rest.call_args.kwargs["query"]
     assert "client_id=eq.4" in company_query
+
+
+@mock.patch.object(ha, "ensure_data_backend", return_value=None)
+def test_password_change_route_uses_token_user(_ensure) -> None:
+    event = {
+        "httpMethod": "POST",
+        "path": "/prod/v1/auth/password/change",
+        "body": json.dumps({"currentPassword": "old-secret", "newPassword": "new-secret-1"}),
+        "headers": {"Authorization": "Bearer tok"},
+    }
+    with mock.patch("nuwa_api_auth.require_jwt", return_value={"sub": "8", "cid": "4", "role": "analyst"}):
+        with mock.patch("nuwa_jwt.jwt_int", return_value=8):
+            with mock.patch(
+                "nuwa_pg_dispatch.change_own_password",
+                return_value={"success": True, "mustChangePassword": False},
+            ) as change:
+                out = ha.handler(event, None)
+    assert out["statusCode"] == 200
+    body = json.loads(out["body"])
+    assert body["mustChangePassword"] is False
+    change.assert_called_once_with(
+        user_id=8,
+        current_password="old-secret",
+        new_password="new-secret-1",
+    )

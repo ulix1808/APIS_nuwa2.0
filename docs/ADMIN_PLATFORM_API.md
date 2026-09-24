@@ -171,6 +171,32 @@ Con `super_admin` + `targetUserId`: actualiza `full_name`, `role` (app slug), `s
 
 ---
 
+## Directorio del tenant (`POST /v1/team/users/list`)
+
+Cualquier usuario con JWT (analista, oficial, admin, viewer) lista los usuarios de **su** empresa. Sirve para compartir un reporte y escalar. No lista otra compañía: si `targetClientId` viene y no es la del actor, responde 403.
+
+`v1/admin/users/list` sigue siendo de administración. Un analista ahí recibe 403.
+
+Body: `clientId` y `userId` del actor. Opcionales `search`, `status`, `role`.
+
+Response: el mismo `{ "success": true, "users": [...] }` que el listado de plataforma (sin hash de contraseña).
+
+---
+
+## Apagar `must_change_password` (`POST /v1/auth/password/change`)
+
+Lambda **auth**. Requiere `Authorization: Bearer`. El usuario es el `sub` del token; el body no elige otra cuenta.
+
+Body: `{ "currentPassword", "newPassword" }`. `newPassword` mínimo 8 caracteres.
+
+Actualiza `password_hash` y deja `must_change_password = false`. El login no hace este cambio.
+
+Response **200:** `{ "success": true, "mustChangePassword": false }`.
+
+401 si la contraseña actual no coincide. 400 si falta o es corta.
+
+---
+
 ## Pruebas
 
 ```bash

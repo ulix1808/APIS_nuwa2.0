@@ -21,6 +21,7 @@ from nuwa_admin_platform_pg import (
     clients_list,
     parse_operating_countries,
     require_super_admin,
+    team_users_list,
 )
 from nuwa_errors import SupabaseRestError
 
@@ -430,3 +431,29 @@ def test_admin_users_delete_removes_row(mock_conn) -> None:
     assert out["deleted"] is True
     assert any(sql.startswith("DELETE FROM nuwa_users") for sql in seen)
     assert not any("is_active" in sql for sql in seen)
+
+
+def test_team_users_list_rejects_another_company() -> None:
+    with pytest.raises(SupabaseRestError) as exc:
+        team_users_list({"client_id": 4, "role_slug": "analyst"}, {"targetClientId": 1})
+    assert exc.value.status == 403
+
+
+@mock.patch("nuwa_admin_platform_pg._conn")
+def test_team_users_list_scopes_to_actor_company(mock_conn) -> None:
+    seen: list[tuple[str, Any]] = []
+
+    class _Rec(_FakeConn):
+        def execute(self, sql: str, params: Any = None) -> _FakeCursor:
+            seen.append((sql, params))
+            return super().execute(sql, params)
+
+    @contextmanager
+    def _cm():
+        yield _Rec([[]])
+
+    mock_conn.side_effect = lambda: _cm()
+    team_users_list({"client_id": 4, "role_slug": "analyst"}, {})
+    sql, params = seen[0]
+    assert "u.client_id = %s" in sql
+    assert params == [4]

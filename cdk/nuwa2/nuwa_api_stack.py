@@ -529,8 +529,15 @@ class NuwaApiStack(Stack):
         auth_integration = apigw.LambdaIntegration(auth_fn, timeout=api_integration_timeout)
 
         v1 = api.root.add_resource("v1")
-        v1.add_resource("auth").add_resource("login").add_method(
+        auth = v1.add_resource("auth")
+        auth.add_resource("login").add_method(
             "POST", auth_integration, api_key_required=False
+        )
+        auth.add_resource("password").add_resource("change").add_method(
+            "POST", auth_integration, api_key_required=False
+        )
+        v1.add_resource("team").add_resource("users").add_resource("list").add_method(
+            "POST", admin_integration, api_key_required=False
         )
         sources = v1.add_resource("sources")
         sources.add_method("POST", sources_integration, api_key_required=False)
