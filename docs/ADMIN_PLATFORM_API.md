@@ -46,7 +46,7 @@ Response:
 ```json
 {
   "success": true,
-  "clients": [{ "id": 1, "name": "Nuwa", "tokenLimit": 2000, "users": [], "usage": {} }],
+  "clients": [{ "id": 1, "name": "Nuwa", "tokenLimit": 2000, "operatingCountries": ["mexico"], "users": [], "usage": {} }],
   "stats": {
     "totalClients": 2,
     "activeClients": 2,
@@ -62,7 +62,9 @@ Body: `{ "clientId", "userId", "targetClientId" }` → `{ "success", "client", "
 
 ### POST /v1/clients/create
 
-Body: `name`, `rfc` (requeridos), opcionales `legalRep`, `address`, `sector`, `plan`, `tokenLimit`, `billingContact`, `billingEmail`, `paymentMethod`.
+Body: `name`, `rfc` (requeridos), opcionales `legalRep`, `address`, `sector`, `plan`, `tokenLimit`, `billingContact`, `billingEmail`, `paymentMethod`, `operatingCountries`.
+
+`operatingCountries` es un arreglo de `mexico`, `colombia`, `costarica`, `guatemala` (uno o más, sin repetir). Si no viene, queda `["mexico"]`. La columna es `clients.operating_countries` (`TEXT[]`, default `ARRAY['mexico']`, script BFF `028_client_operating_countries.sql`). `get`, `list` y `update` devuelven el mismo campo. En `update`, omitirlo no lo cambia; un valor inválido responde 400.
 
 Crea fila en `companies` + `clients` + `client_token_usage`. El BFF debe llamar después a `POST /v1/clients/storage/init`.
 

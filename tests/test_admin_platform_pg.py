@@ -9,11 +9,14 @@ from unittest import mock
 import pytest
 
 from nuwa_admin_platform_pg import (
+    _countries_from_row,
     _map_app_role_to_id,
     _map_role_slug,
     _user_api,
     admin_users_invite,
+    clients_create,
     clients_list,
+    parse_operating_countries,
     require_super_admin,
 )
 from nuwa_errors import SupabaseRestError
@@ -149,6 +152,7 @@ def test_clients_list_returns_stats(mock_conn) -> None:
             "payment_method": None,
             "next_invoice": None,
             "compliance_officer_user_id": None,
+            "operating_countries": ["colombia", "costarica"],
             "created_at": "2026-01-01",
             "company_name": "Nuwa",
         }
@@ -181,9 +185,63 @@ def test_clients_list_returns_stats(mock_conn) -> None:
     assert out["success"] is True
     assert len(out["clients"]) == 1
     assert out["clients"][0]["name"] == "Nuwa"
+    assert out["clients"][0]["operatingCountries"] == ["colombia", "costarica"]
     assert out["clients"][0]["usage"]["screenings"] == 10
     assert out["stats"]["totalClients"] == 1
     assert out["stats"]["totalTokensConsumed"] == 100
+
+
+def test_parse_operating_countries() -> None:
+    assert parse_operating_countries(["México", "Costa Rica", "mexico"]) == ["mexico", "costarica"]
+    assert parse_operating_countries("guatemala,colombia") == ["guatemala", "colombia"]
+    assert parse_operating_countries(["peru"]) is None
+    assert parse_operating_countries([]) is None
+    assert _countries_from_row({}) == ["mexico"]
+    assert _countries_from_row({"operating_countries": "{mexico,guatemala}"}) == ["mexico", "guatemala"]
+
+
+def test_clients_create_rejects_unknown_country() -> None:
+    with pytest.raises(SupabaseRestError) as exc:
+        clients_create({"name": "Sadah", "rfc": "SAD", "operatingCountries": ["peru"]})
+    assert exc.value.status == 400
+
+
+@mock.patch("nuwa_admin_platform_pg._conn")
+def test_clients_create_stores_operating_countries(mock_conn) -> None:
+    seen: list[tuple[str, Any]] = []
+
+    class _Rec(_FakeConn):
+        def execute(self, sql: str, params: Any = None) -> _FakeCursor:
+            seen.append((sql, params))
+            return super().execute(sql, params)
+
+    script: list[Any] = [
+        {"id": 8},
+        None,
+        {
+            "id": 8,
+            "name": "Sadah",
+            "rfc": "SAD",
+            "plan": "professional",
+            "status": "active",
+            "token_limit": 2000,
+            "tokens_used": 0,
+            "operating_countries": ["mexico", "guatemala"],
+        },
+        None,
+    ]
+
+    @contextmanager
+    def _cm():
+        yield _Rec(script)
+
+    mock_conn.side_effect = lambda: _cm()
+    out = clients_create(
+        {"name": "Sadah", "rfc": "sad", "operatingCountries": ["México", "Guatemala"]},
+    )
+    assert out["client"]["operatingCountries"] == ["mexico", "guatemala"]
+    insert_params = next(params for sql, params in seen if "operating_countries" in sql)
+    assert insert_params[-1] == ["mexico", "guatemala"]
 
 
 @mock.patch("nuwa_admin_platform_pg.hash_password", return_value="pbkdf2_sha256$s$hash")

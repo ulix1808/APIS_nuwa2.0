@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 from typing import Any
 
@@ -40,6 +41,61 @@ APP_ROLE_DISPLAY_NAME: dict[str, str] = {
     "analyst": "Analyst",
     "viewer": "Viewer",
 }
+
+
+OPERATING_COUNTRY_CODES = ("mexico", "colombia", "costarica", "guatemala")
+
+
+def _canonicalize_country_token(raw: str) -> str:
+    token = re.sub(r"[\s_-]+", "", raw.strip().lower())
+    if token == "méxico":
+        return "mexico"
+    return token
+
+
+def parse_operating_countries(raw: Any) -> list[str] | None:
+    """Uno o más de mexico|colombia|costarica|guatemala. None si falta o hay un valor inválido."""
+    if isinstance(raw, str):
+        items: list[Any] = raw.split(",")
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        return None
+    out: list[str] = []
+    for item in items:
+        if not isinstance(item, (str, int)):
+            return None
+        code = _canonicalize_country_token(str(item))
+        if code not in OPERATING_COUNTRY_CODES:
+            return None
+        if code not in out:
+            out.append(code)
+    return out or None
+
+
+def _countries_from_row(row: dict[str, Any]) -> list[str]:
+    raw = row.get("operating_countries")
+    if isinstance(raw, str):
+        raw = raw.strip().strip("{}")
+    parsed = parse_operating_countries(raw) if raw not in (None, "") else None
+    return parsed or ["mexico"]
+
+
+def _countries_from_body(body: dict[str, Any]) -> list[str] | None:
+    """None si el body no trae el campo. 400 si viene y no es válido."""
+    if "operatingCountries" in body:
+        raw = body.get("operatingCountries")
+    elif "operating_countries" in body:
+        raw = body.get("operating_countries")
+    else:
+        return None
+    parsed = parse_operating_countries(raw)
+    if not parsed:
+        raise SupabaseRestError(
+            400,
+            "operatingCountries inválido. Usa mexico, colombia, costarica o guatemala.",
+        )
+    return parsed
 
 
 def require_super_admin(actor: dict[str, Any]) -> None:
@@ -158,6 +214,7 @@ def _client_api(row: dict[str, Any], users: list[dict[str, Any]] | None = None, 
         "nextInvoice": _iso_date(row.get("next_invoice")) or "---",
         "createdAt": _iso_date(row.get("created_at")) or "",
         "complianceOfficerUserId": row.get("compliance_officer_user_id"),
+        "operatingCountries": _countries_from_row(row),
         "users": users or [],
         "usage": usage or _usage_api(None),
     }
@@ -180,6 +237,7 @@ SELECT
   cl.payment_method,
   cl.next_invoice,
   cl.compliance_officer_user_id,
+  COALESCE(cl.operating_countries, ARRAY['mexico']::text[]) AS operating_countries,
   COALESCE(cl.created_at, co.created_at) AS created_at,
   co.name AS company_name
 FROM companies co
@@ -284,6 +342,7 @@ def clients_create(body: dict[str, Any]) -> dict[str, Any]:
     rfc = str(body.get("rfc") or "").strip().upper()
     if not name or not rfc:
         raise SupabaseRestError(400, "name y rfc requeridos.")
+    countries = _countries_from_body(body) or ["mexico"]
 
     with _conn() as conn:
         next_id = conn.execute("SELECT COALESCE(MAX(client_id), 0) + 1 AS id FROM companies").fetchone()
@@ -296,8 +355,8 @@ def clients_create(body: dict[str, Any]) -> dict[str, Any]:
             """
             INSERT INTO clients (
               id, name, rfc, legal_rep, address, sector, plan, token_limit,
-              billing_contact, billing_email, payment_method, status
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'active')
+              billing_contact, billing_email, payment_method, status, operating_countries
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'active',%s::text[])
             RETURNING *
             """,
             (
@@ -312,6 +371,7 @@ def clients_create(body: dict[str, Any]) -> dict[str, Any]:
                 body.get("billingContact"),
                 body.get("billingEmail"),
                 body.get("paymentMethod"),
+                countries,
             ),
         ).fetchone()
         conn.execute(
@@ -331,6 +391,12 @@ def clients_update(body: dict[str, Any]) -> dict[str, Any]:
                 (body["name"], target),
             )
         _ensure_client_row(conn, target, str(body.get("name") or "Client"))
+        countries = _countries_from_body(body)
+        if countries:
+            conn.execute(
+                "UPDATE clients SET operating_countries = %s::text[], updated_at = NOW() WHERE id = %s",
+                (countries, target),
+            )
         patch_map = {
             "name": "name",
             "rfc": "rfc",
