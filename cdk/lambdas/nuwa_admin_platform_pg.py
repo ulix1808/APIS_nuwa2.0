@@ -484,10 +484,11 @@ def admin_users_list_platform(body: dict[str, Any]) -> dict[str, Any]:
             slug = "user"
         conditions.append("r.slug = %s")
         params.append(slug)
-    client_id = body.get("clientId")
-    if client_id is not None:
+    # targetClientId is the company filter. Actor clientId is always present and must not narrow the list.
+    target_client = body.get("targetClientId")
+    if target_client is not None and str(target_client).strip() != "":
         conditions.append("u.client_id = %s")
-        params.append(int(client_id))
+        params.append(int(target_client))
     status = body.get("status")
     if status == "active":
         conditions.append("u.is_active = true")
@@ -517,7 +518,12 @@ def admin_users_invite(body: dict[str, Any]) -> dict[str, Any]:
     email = str(body["email"]).strip().lower()
     name = str(body.get("name") or body.get("fullName") or "").strip()
     role = str(body.get("role") or "analyst")
-    client_id = int(body.get("clientId") or body.get("targetClientId"))
+    # Actor clientId is the master (often 1). The company that receives the user is targetClientId.
+    raw_target = body.get("targetClientId")
+    if raw_target is not None and str(raw_target).strip() != "":
+        client_id = int(raw_target)
+    else:
+        client_id = int(body["clientId"])
     if "@" not in email or not name:
         raise SupabaseRestError(400, "email y name requeridos.")
 
@@ -539,8 +545,10 @@ def admin_users_invite(body: dict[str, Any]) -> dict[str, Any]:
             raise SupabaseRestError(409, "email_exists")
         row = conn.execute(
             """
-            INSERT INTO nuwa_users (client_id, email, full_name, role_id, password_hash, is_active)
-            VALUES (%s, %s, %s, %s, %s, true)
+            INSERT INTO nuwa_users (
+              client_id, email, full_name, role_id, password_hash, is_active, must_change_password
+            )
+            VALUES (%s, %s, %s, %s, %s, true, true)
             RETURNING id, email, full_name, client_id, is_active
             """,
             (client_id, email, name, role_id, password_hash),
@@ -563,7 +571,8 @@ def admin_users_reset_password(body: dict[str, Any]) -> dict[str, Any]:
     with _conn() as conn:
         row = conn.execute(
             """
-            UPDATE nuwa_users SET password_hash = %s, updated_at = NOW(), is_active = true
+            UPDATE nuwa_users
+            SET password_hash = %s, updated_at = NOW(), is_active = true, must_change_password = true
             WHERE id = %s
             RETURNING id, email, full_name, client_id, is_active, role_id
             """,
@@ -590,6 +599,8 @@ def admin_users_update_platform(body: dict[str, Any]) -> dict[str, Any]:
     sets: list[str] = []
     vals: list[Any] = []
     role_raw = str(body["role"]) if "role" in body else None
+    raw_target = body.get("targetClientId")
+    reassign = int(raw_target) if raw_target is not None and str(raw_target).strip() != "" else None
     if "name" in body:
         sets.append("full_name = %s")
         vals.append(body["name"])
@@ -597,6 +608,9 @@ def admin_users_update_platform(body: dict[str, Any]) -> dict[str, Any]:
         st = str(body["status"])
         sets.append("is_active = %s")
         vals.append(st in ("active", "invited"))
+    if reassign is not None:
+        sets.append("client_id = %s")
+        vals.append(reassign)
     if not sets and role_raw is None:
         raise SupabaseRestError(400, "Nada que actualizar.")
     with _conn() as conn:
@@ -619,3 +633,66 @@ def admin_users_update_platform(body: dict[str, Any]) -> dict[str, Any]:
         conn.commit()
     user = _user_api({**dict(row), "role_slug": role_row["slug"] if role_row else "user"}, company_name=company["name"] if company else None)
     return {"success": True, "user": user}
+
+
+def _quote_ident(name: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name or ""):
+        raise SupabaseRestError(500, "invalid_ident")
+    return f'"{name}"'
+
+
+def _detach_user_foreign_keys(conn: Any, user_id: int, fallback_user_id: int | None) -> None:
+    """Null or reassign FKs so DELETE nuwa_users is not blocked by RESTRICT."""
+    rows = conn.execute(
+        """
+        SELECT tc.table_schema, tc.table_name, kcu.column_name, c.is_nullable
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON ccu.constraint_name = tc.constraint_name
+         AND ccu.table_schema = tc.table_schema
+        JOIN information_schema.columns c
+          ON c.table_schema = tc.table_schema
+         AND c.table_name = tc.table_name
+         AND c.column_name = kcu.column_name
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND ccu.table_name = 'nuwa_users'
+          AND ccu.column_name = 'id'
+          AND tc.table_name <> 'nuwa_users'
+        """,
+    ).fetchall()
+    fallback = fallback_user_id if fallback_user_id and fallback_user_id != user_id else None
+    for row in rows:
+        table = f"{_quote_ident(row['table_schema'])}.{_quote_ident(row['table_name'])}"
+        col = _quote_ident(row["column_name"])
+        conn.execute("SAVEPOINT detach_fk")
+        try:
+            if row["is_nullable"] == "YES":
+                conn.execute(f"UPDATE {table} SET {col} = NULL WHERE {col} = %s", (user_id,))
+            elif fallback is not None:
+                conn.execute(
+                    f"UPDATE {table} SET {col} = %s WHERE {col} = %s",
+                    (fallback, user_id),
+                )
+            conn.execute("RELEASE SAVEPOINT detach_fk")
+        except Exception:
+            conn.execute("ROLLBACK TO SAVEPOINT detach_fk")
+
+
+def admin_users_delete_platform(body: dict[str, Any], fallback_user_id: int | None = None) -> dict[str, Any]:
+    uid = int(body["targetUserId"])
+    with _conn() as conn:
+        _detach_user_foreign_keys(conn, uid, fallback_user_id)
+        try:
+            row = conn.execute(
+                "DELETE FROM nuwa_users WHERE id = %s RETURNING id",
+                (uid,),
+            ).fetchone()
+        except psycopg.errors.ForeignKeyViolation as e:
+            raise SupabaseRestError(409, "user_has_related_records") from e
+        if not row:
+            raise SupabaseRestError(404, "Usuario no encontrado.")
+        conn.commit()
+    return {"success": True, "deleted": True}

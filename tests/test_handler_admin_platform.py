@@ -140,6 +140,38 @@ def test_admin_users_list_platform_for_super_admin() -> None:
     mock_list.assert_called_once_with(body)
 
 
+def test_admin_users_list_with_target_stays_on_platform() -> None:
+    ha = _load_handler_admin()
+    with mock.patch.object(ha, "fetch_user_with_role", return_value=_super_admin_actor()):
+        with mock.patch.object(
+            ha,
+            "admin_users_list_platform",
+            return_value={"success": True, "users": []},
+        ) as mock_list:
+            with mock.patch.object(ha, "users_list") as legacy:
+                body = {"clientId": 1, "userId": 1, "targetClientId": 4}
+                out = ha.handler(_event("/v1/admin/users/list", body), None)
+    assert out["statusCode"] == 200
+    mock_list.assert_called_once_with(body)
+    legacy.assert_not_called()
+
+
+def test_admin_users_delete_hard_deletes_for_super_admin() -> None:
+    ha = _load_handler_admin()
+    with mock.patch.object(ha, "fetch_user_with_role", return_value=_super_admin_actor()):
+        with mock.patch.object(
+            ha,
+            "admin_users_delete_platform",
+            return_value={"success": True, "deleted": True},
+        ) as mock_delete:
+            with mock.patch.object(ha, "users_delete") as legacy:
+                body = {"clientId": 1, "userId": 1, "targetUserId": 5}
+                out = ha.handler(_event("/v1/admin/users/delete", body), None)
+    assert out["statusCode"] == 200
+    mock_delete.assert_called_once_with(body, fallback_user_id=1)
+    legacy.assert_not_called()
+
+
 def test_clients_list_forbidden_for_admin() -> None:
     ha = _load_handler_admin()
     admin_actor = {

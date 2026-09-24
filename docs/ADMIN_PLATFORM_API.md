@@ -90,8 +90,9 @@ Body: `{ "targetClientId" }` → pone `clients.tokens_used = 0`.
 
 | Actor | Body | Comportamiento |
 |-------|------|----------------|
-| `super_admin` | Sin `targetClientId` | Lista plataforma (`search`, `role`, `clientId`, `status`) |
-| `admin` / con `targetClientId` | Tenant | Lista usuarios de una compañía (legacy) |
+| `super_admin` | Sin `targetClientId` | Todos los usuarios. El `clientId` del actor no filtra. |
+| `super_admin` | Con `targetClientId` | Solo esa empresa. Misma forma `{ users }`. |
+| otro rol | | Lista legacy de su compañía |
 
 Response plataforma: `{ "success": true, "users": [{ "id", "email", "name", "role", "status", "clientId", "companyName" }] }`
 
@@ -109,11 +110,11 @@ Body:
   "email": "uli@nuwa.space",
   "name": "Uli",
   "role": "analyst",
-  "clientId": 1
+  "targetClientId": 2
 }
 ```
 
-(`clientId` del tenant objetivo va en el campo homónimo del body de invite; el actor sigue llevando su `clientId`/`userId`.)
+`clientId` / `userId` son el actor (el master). La empresa del usuario nuevo es `targetClientId`. Si no viene, se usa el `clientId` del actor. El alta deja `must_change_password = true`.
 
 Response **201**:
 
@@ -139,7 +140,11 @@ Body: `{ "targetUserId" }` → `{ "success", "user", "tempPassword" }`.
 
 ### POST /v1/admin/users/update
 
-Con `super_admin` + `targetUserId`: actualiza `full_name`, `role` (app slug), `status` (`active` | `disabled` | `invited`).
+Con `super_admin` + `targetUserId`: actualiza `full_name`, `role` (app slug), `status` (`active` | `disabled` | `invited`) y, si viene `targetClientId`, mueve `nuwa_users.client_id` a esa empresa.
+
+### POST /v1/admin/users/delete
+
+`super_admin`: borra la fila (`DELETE`). Antes suelta o reasigna las llaves foráneas que apuntan a ese usuario; el respaldo es el `userId` del actor. Otro rol solo desactiva (`is_active = false`).
 
 ---
 

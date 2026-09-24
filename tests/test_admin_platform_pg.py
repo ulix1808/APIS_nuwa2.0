@@ -13,7 +13,10 @@ from nuwa_admin_platform_pg import (
     _map_app_role_to_id,
     _map_role_slug,
     _user_api,
+    admin_users_delete_platform,
     admin_users_invite,
+    admin_users_list_platform,
+    admin_users_update_platform,
     clients_create,
     clients_list,
     parse_operating_countries,
@@ -298,3 +301,132 @@ def test_admin_users_invite_email_exists(mock_conn) -> None:
             }
         )
     assert exc.value.status == 409
+
+
+@mock.patch("nuwa_admin_platform_pg._conn")
+def test_admin_users_list_filters_by_target_not_actor(mock_conn) -> None:
+    seen: list[tuple[str, Any]] = []
+
+    class _Rec(_FakeConn):
+        def execute(self, sql: str, params: Any = None) -> _FakeCursor:
+            seen.append((sql, params))
+            return super().execute(sql, params)
+
+    @contextmanager
+    def _cm():
+        yield _Rec([[]])
+
+    mock_conn.side_effect = lambda: _cm()
+    admin_users_list_platform({"clientId": 1, "userId": 9, "targetClientId": 4})
+    sql, params = seen[0]
+    assert "u.client_id = %s" in sql
+    assert params == [4]
+
+    seen.clear()
+    mock_conn.side_effect = lambda: _cm()
+    admin_users_list_platform({"clientId": 1, "userId": 9})
+    sql, _params = seen[0]
+    assert "u.client_id = %s" not in sql
+
+
+@mock.patch("nuwa_admin_platform_pg.hash_password", return_value="pbkdf2_sha256$s$hash")
+@mock.patch("nuwa_admin_platform_pg._generate_temp_password", return_value="TempPass123!")
+@mock.patch("nuwa_admin_platform_pg._conn")
+def test_admin_users_invite_uses_target_client(mock_conn, _gen, _hash) -> None:
+    seen: list[tuple[str, Any]] = []
+
+    class _Rec(_FakeConn):
+        def execute(self, sql: str, params: Any = None) -> _FakeCursor:
+            seen.append((sql, params))
+            return super().execute(sql, params)
+
+    script: list[Any] = [
+        [{"id": 3, "slug": "user"}],
+        {"name": "Sadah"},
+        None,
+        {
+            "id": 99,
+            "email": "new@nuwa.space",
+            "full_name": "New",
+            "client_id": 4,
+            "is_active": True,
+        },
+        {"slug": "user"},
+    ]
+
+    @contextmanager
+    def _cm():
+        yield _Rec(script)
+
+    mock_conn.side_effect = lambda: _cm()
+    out = admin_users_invite(
+        {
+            "email": "new@nuwa.space",
+            "name": "New User",
+            "role": "analyst",
+            "clientId": 1,
+            "userId": 9,
+            "targetClientId": 4,
+        }
+    )
+    assert out["user"]["clientId"] == 4
+    company_params = next(params for sql, params in seen if "FROM companies" in sql)
+    assert company_params == (4,)
+    insert_params = next(params for sql, params in seen if "INSERT INTO nuwa_users" in sql)
+    assert insert_params[0] == 4
+
+
+@mock.patch("nuwa_admin_platform_pg._conn")
+def test_admin_users_update_reassigns_client(mock_conn) -> None:
+    seen: list[tuple[str, Any]] = []
+
+    class _Rec(_FakeConn):
+        def execute(self, sql: str, params: Any = None) -> _FakeCursor:
+            seen.append((sql, params))
+            return super().execute(sql, params)
+
+    script: list[Any] = [
+        {
+            "id": 5,
+            "email": "a@b.com",
+            "full_name": "Ana",
+            "client_id": 4,
+            "is_active": True,
+            "role_id": 3,
+        },
+        {"slug": "user"},
+        {"name": "Sadah"},
+    ]
+
+    @contextmanager
+    def _cm():
+        yield _Rec(script)
+
+    mock_conn.side_effect = lambda: _cm()
+    out = admin_users_update_platform(
+        {"targetUserId": 5, "targetClientId": 4, "clientId": 1, "userId": 9}
+    )
+    assert out["user"]["clientId"] == 4
+    update_params = next(params for sql, params in seen if sql.startswith("UPDATE nuwa_users"))
+    assert update_params[0] == 4
+    assert "client_id = %s" in seen[0][0]
+
+
+@mock.patch("nuwa_admin_platform_pg._conn")
+def test_admin_users_delete_removes_row(mock_conn) -> None:
+    seen: list[str] = []
+
+    class _Rec(_FakeConn):
+        def execute(self, sql: str, params: Any = None) -> _FakeCursor:
+            seen.append(sql)
+            return super().execute(sql, params)
+
+    @contextmanager
+    def _cm():
+        yield _Rec([[], {"id": 5}])
+
+    mock_conn.side_effect = lambda: _cm()
+    out = admin_users_delete_platform({"targetUserId": 5}, fallback_user_id=9)
+    assert out["deleted"] is True
+    assert any(sql.startswith("DELETE FROM nuwa_users") for sql in seen)
+    assert not any("is_active" in sql for sql in seen)

@@ -17,6 +17,7 @@ from nuwa_errors import SupabaseRestError
 from nuwa_http import json_response
 from nuwa_obs_log import log_await, log_done, log_handler_enter, log_phase
 from nuwa_admin_platform_pg import (
+    admin_users_delete_platform,
     admin_users_invite,
     admin_users_list_platform,
     admin_users_resend_invite,
@@ -371,7 +372,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         if path.endswith("/admin/roles/list"):
             return roles_list(actor, body)
         if path.endswith("/admin/users/list"):
-            if actor["role_slug"] == "super_admin" and body.get("targetClientId") is None:
+            if actor["role_slug"] == "super_admin":
                 return _resp(200, admin_users_list_platform(body))
             return users_list(actor, body)
         if path.endswith("/admin/users/create"):
@@ -381,6 +382,8 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 return _resp(200, admin_users_update_platform(body))
             return users_update(actor, body)
         if path.endswith("/admin/users/delete"):
+            if actor["role_slug"] == "super_admin":
+                return _resp(200, admin_users_delete_platform(body, fallback_user_id=int(actor["id"])))
             return users_delete(actor, body)
 
         # Panel admin plataforma (BFF /v2/admin) — super_admin only
