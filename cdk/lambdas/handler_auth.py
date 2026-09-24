@@ -18,8 +18,9 @@ from nuwa_jwt import mint_access_token
 from nuwa_password import verify_password
 from nuwa_supabase import rest_json
 
-_USER_SELECT = "id,client_id,email,password_hash,full_name,role_id,is_active"
+_USER_SELECT = "id,client_id,email,password_hash,full_name,role_id,is_active,must_change_password"
 _COMPANY_SELECT_LOGIN = "name,apigw_key_secret"
+_MASTER_ROLE_SLUGS = frozenset({"super_admin", "master", "platform_owner", "owner"})
 
 _LOG = logging.getLogger("nuwa.obs")
 
@@ -49,6 +50,78 @@ def _body(event: dict[str, Any]) -> dict[str, Any]:
         return {}
 
 
+def pick_login_account(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """One product tenant wins over platform clientId=1 / master when the email is duplicated."""
+    valid = [r for r in rows if int(r.get("client_id") or 0) > 0]
+    if not valid:
+        return None
+    if len(valid) == 1:
+        return valid[0]
+    not_platform = [r for r in valid if int(r["client_id"]) != 1]
+    product = [
+        r
+        for r in not_platform
+        if str(r.get("role_slug") or "").lower() not in _MASTER_ROLE_SLUGS
+    ]
+    if len(product) == 1:
+        return product[0]
+    if len(not_platform) == 1:
+        return not_platform[0]
+    return None
+
+
+def resolve_login_account(
+    rows: list[dict[str, Any]],
+    hint_client_id: int | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Returns (user, error_code). error_code is unauthorized or client_id_required."""
+    active = [r for r in rows if r.get("is_active", True)]
+    if not active:
+        return None, "unauthorized"
+    if len(active) == 1:
+        return active[0], None
+    if hint_client_id is not None and hint_client_id != 1:
+        matched = [r for r in active if int(r["client_id"]) == hint_client_id]
+        if len(matched) == 1:
+            return matched[0], None
+        return None, "unauthorized"
+    picked = pick_login_account(active)
+    if picked is None:
+        return None, "client_id_required"
+    return picked, None
+
+
+def _load_login_rows(email: str) -> list[dict[str, Any]]:
+    from nuwa_config import is_database_mode
+
+    if is_database_mode():
+        from nuwa_pg_dispatch import fetch_login_candidates
+
+        return fetch_login_candidates(email)
+
+    rows = rest_json(
+        "GET",
+        "nuwa_users",
+        query=f"email=eq.{quote(email, safe='')}&select={_USER_SELECT}",
+    )
+    if not rows:
+        return []
+    if not isinstance(rows, list):
+        rows = [rows]
+    for u in rows:
+        u["must_change_password"] = bool(u.get("must_change_password"))
+        roles = rest_json(
+            "GET",
+            "nuwa_roles",
+            query=f"id=eq.{u['role_id']}&select=id,slug,name",
+        )
+        role = roles[0] if isinstance(roles, list) and roles else roles
+        if isinstance(role, dict):
+            u["role_slug"] = str(role.get("slug") or "").lower()
+            u["role_name"] = role.get("name") or ""
+    return rows
+
+
 def _login(body: dict[str, Any]) -> dict[str, Any]:
     email = (body.get("email") or "").strip().lower()
     password = body.get("password") or ""
@@ -61,45 +134,35 @@ def _login(body: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         return _resp(400, {"code": "BAD_REQUEST", "message": "clientId debe ser entero si se envía."})
 
-    rows = rest_json(
-        "GET",
-        "nuwa_users",
-        query=f"email=eq.{quote(email, safe='')}&select={_USER_SELECT}",
-    )
-    if not rows:
+    rows = _load_login_rows(email)
+    u, err = resolve_login_account(rows, hint_cid_i)
+    if err == "client_id_required":
+        return _resp(
+            400,
+            {
+                "code": "CLIENT_ID_REQUIRED",
+                "message": "Hay varias cuentas con este email; envía clientId.",
+            },
+        )
+    if u is None:
         return _resp(401, {"code": "UNAUTHORIZED", "message": "Credenciales inválidas."})
-    if not isinstance(rows, list):
-        rows = [rows]
-
-    active = [r for r in rows if r.get("is_active", True)]
-    if not active:
-        return _resp(401, {"code": "UNAUTHORIZED", "message": "Credenciales inválidas."})
-
-    if len(active) > 1:
-        if hint_cid_i is None:
-            return _resp(
-                400,
-                {
-                    "code": "CLIENT_ID_REQUIRED",
-                    "message": "Hay varias cuentas con este email; envía clientId.",
-                },
-            )
-        active = [r for r in active if int(r["client_id"]) == hint_cid_i]
-        if len(active) != 1:
-            return _resp(401, {"code": "UNAUTHORIZED", "message": "Credenciales inválidas."})
-
-    u = active[0]
     if not verify_password(password, u.get("password_hash") or ""):
         return _resp(401, {"code": "UNAUTHORIZED", "message": "Credenciales inválidas."})
 
-    roles = rest_json(
-        "GET",
-        "nuwa_roles",
-        query=f"id=eq.{u['role_id']}&select=id,slug,name",
-    )
-    if not roles:
-        return _resp(500, {"code": "INTERNAL", "message": "Rol no encontrado."})
-    r0 = roles[0] if isinstance(roles, list) else roles
+    # Captured before any later write. Login does not clear must_change_password.
+    must_change = bool(u.get("must_change_password"))
+
+    if u.get("role_slug"):
+        r0 = {"slug": u["role_slug"], "name": u.get("role_name") or ""}
+    else:
+        roles = rest_json(
+            "GET",
+            "nuwa_roles",
+            query=f"id=eq.{u['role_id']}&select=id,slug,name",
+        )
+        if not roles:
+            return _resp(500, {"code": "INTERNAL", "message": "Rol no encontrado."})
+        r0 = roles[0] if isinstance(roles, list) else roles
 
     cid = int(u["client_id"])
     comps = rest_json(
@@ -131,6 +194,7 @@ def _login(body: dict[str, Any]) -> dict[str, Any]:
         "roleSlug": r0["slug"],
         "roleName": r0.get("name") or "",
         "isActive": bool(u.get("is_active", True)),
+        "mustChangePassword": must_change,
     }
     return _resp(
         200,

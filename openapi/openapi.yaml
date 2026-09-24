@@ -92,7 +92,7 @@ paths:
       description: |
         **No requiere** Bearer ni `x-api-key`. Devuelve `user`, `company`, **`accessToken`** (JWT), `tokenType` y `expiresIn`.
         El front usa ese token en `Authorization: Bearer` para el resto de rutas.
-        Si el mismo `email` existe en varias compañías, envía `clientId` para desambiguar.
+        Si el mismo `email` está en la plataforma y en una sola empresa de producto, la sesión es la de producto. `clientId` desambigua solo cuando hay dos o más empresas de producto. `user.mustChangePassword` sale en la respuesta y este request no lo borra.
       security: []
       requestBody:
         required: true
@@ -2991,7 +2991,7 @@ components:
           type: string
         clientId:
           type: integer
-          description: Obligatorio si hay más de un usuario con el mismo email (multi-tenant)
+          description: Obligatorio solo si el email está en dos o más empresas de producto. clientId 1 no elige la cuenta de plataforma cuando hay una empresa de producto.
 
     LoginResponse:
       type: object
@@ -3009,6 +3009,9 @@ components:
             roleSlug: { type: string }
             roleName: { type: string }
             isActive: { type: boolean }
+            mustChangePassword:
+              type: boolean
+              description: Valor de nuwa_users.must_change_password de la cuenta elegida. El login no lo pone en false.
         company:
           type: object
           properties:

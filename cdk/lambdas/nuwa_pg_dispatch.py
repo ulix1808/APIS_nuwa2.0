@@ -126,6 +126,27 @@ def _conn():
         yield conn
 
 
+def fetch_login_candidates(email: str) -> list[dict[str, Any]]:
+    """Active nuwa_users for this email, with role slug and must_change_password.
+
+    Login reads the flag here and must not clear it. Password change clears it.
+    """
+    sql = """
+    SELECT u.id, u.client_id, u.email, u.password_hash, u.full_name, u.role_id, u.is_active,
+           COALESCE(u.must_change_password, false) AS must_change_password,
+           LOWER(COALESCE(r.slug, '')) AS role_slug,
+           COALESCE(r.name, '') AS role_name
+    FROM public.nuwa_users u
+    LEFT JOIN public.nuwa_roles r ON r.id = u.role_id
+    WHERE LOWER(u.email) = LOWER(%s)
+      AND COALESCE(u.is_active, true) = true
+    ORDER BY u.client_id ASC
+    """
+    with _conn() as conn:
+        rows = conn.execute(sql, (email,)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def fetch_user_with_role_pg(*, user_id: int) -> dict[str, Any] | None:
     sql = """
     SELECT u.id, u.client_id, u.email, u.full_name, u.role_id, u.is_active, r.slug AS role_slug
@@ -291,6 +312,7 @@ def _nuwa_users_get(parts: dict[str, str]) -> list[dict[str, Any]]:
             "created_at",
             "password_hash",
             "updated_at",
+            "must_change_password",
         }
     )
     try:

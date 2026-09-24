@@ -23,8 +23,9 @@ Compañías **antiguas** con `apigw_key_secret` en texto plano: al descifrar, si
 ### Login de aplicación (`POST /v1/auth/login`)
 
 - **No** exige `x-api-key` ni Bearer (ruta pública en gateway).
-- Body: `email`, `password`, y opcionalmente **`clientId`** si hay colisión de email entre tenants.
-- Respuesta **200:** `user`, `company`, **`accessToken`** (JWT), `tokenType`, `expiresIn`.
+- Body: `email`, `password`, y opcionalmente **`clientId`** si el mismo correo está en más de una empresa de producto.
+- Si el correo está en la plataforma (`clientId` 1, rol master) y en una sola empresa de producto, entra a la empresa de producto. `clientId: 1` en el body no cambia eso.
+- Respuesta **200:** `user` (incluye `mustChangePassword`, leído y no borrado en este request), `company`, **`accessToken`** (JWT de esa cuenta), `tokenType`, `expiresIn`.
 - Contraseñas: **pbkdf2_sha256** (`nuwa_password`).
 
 ### Diagrama: login y llamadas posteriores
