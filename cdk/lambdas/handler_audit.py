@@ -13,6 +13,7 @@ from nuwa_audit_pg import insert_audit_event, list_audit_events
 from nuwa_config import DatabaseConfigError, SupabaseConfigError, ensure_data_backend
 from nuwa_errors import SupabaseRestError
 from nuwa_http import CORS_HEADERS
+from nuwa_monitoring_worker import monitoring_worker_claims, monitoring_worker_secret_ok
 from nuwa_obs_log import log_handler_enter, log_phase
 
 
@@ -52,7 +53,7 @@ def handle_create(event: dict[str, Any], claims: dict[str, Any]) -> dict[str, An
     client_id = _int(body.get("clientId")) or bound
     if client_id is None:
         return _resp(400, {"code": "BAD_REQUEST", "message": "clientId requerido."})
-    if not jwt_allows_client(claims, client_id):
+    if not claims.get("worker") and not jwt_allows_client(claims, client_id):
         return _resp(403, {"code": "FORBIDDEN", "message": "clientId no permitido para este token."})
     event_type = str(body.get("type") or "").strip()
     category = str(body.get("category") or "").strip()
@@ -114,7 +115,10 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     claims = require_jwt(event)
     if isinstance(claims, str):
-        return _resp(401, {"code": "UNAUTHORIZED", "message": claims})
+        if monitoring_worker_secret_ok(event):
+            claims = monitoring_worker_claims()
+        else:
+            return _resp(401, {"code": "UNAUTHORIZED", "message": claims})
 
     path = (event.get("path") or "").rstrip("/")
     log_phase("audit_route", f"{method} {path}")
@@ -123,6 +127,8 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         if method == "POST" and path.endswith("/audit/create"):
             return handle_create(event, claims)
         if method in ("GET", "POST") and path.endswith("/audit/list"):
+            if claims.get("worker"):
+                return _resp(403, {"code": "FORBIDDEN", "message": "Worker no puede listar audit."})
             return handle_list(event, claims)
         return _resp(404, {"code": "NOT_FOUND", "message": "Ruta no encontrada", "path": path})
     except SupabaseRestError as e:

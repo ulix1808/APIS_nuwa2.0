@@ -21,6 +21,12 @@ def test_openapi_parses() -> None:
     resolve_res = data["paths"]["/v1/escalations/resolve"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["resolution"]["properties"]
     assert "resolvedByEmail" in resolve_res
     assert "/v1/clients/list" in data["paths"]
+    assert "/v1/tokens/balance" in data["paths"]
+    assert "/v1/tokens/ledger" in data["paths"]
+    assert "/v1/tokens/consume" in data["paths"]
+    assert "operatingCountries" in data["components"]["schemas"]["PlatformClient"]["properties"]
+    audit_create = data["paths"]["/v1/audit/create"]["post"]["description"]
+    assert "x-monitoring-worker-secret" in audit_create
     assert "/v1/admin/users/invite" in data["paths"]
     assert "/v1/admin/users/reset-password" in data["paths"]
     entity = data["components"]["schemas"]["EntitySummary"]["properties"]

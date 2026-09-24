@@ -1661,6 +1661,7 @@ paths:
       description: |
         Persiste un evento en `nuwa_audit_events` acotado al `cid` del JWT.
         Login y screening del BFF deben usar esta ruta (no RDS directo).
+        El worker de monitoreo puede crear eventos con `x-monitoring-worker-secret` (o Bearer con el mismo secreto, sin JWT). Ese secreto no puede listar.
       security:
         - BearerAuth: []
       requestBody:
@@ -1892,9 +1893,10 @@ paths:
   /v1/admin/users/delete:
     post:
       tags: [Admin]
-      summary: Desactivar usuario (isActive=false)
+      summary: Borrar o desactivar usuario
       description: |
-        Mismos permisos que actualización de usuario.
+        `super_admin` borra la fila y suelta las llaves foráneas hacia ese usuario.
+        Otro rol solo pone `isActive=false`.
       security:
         - BearerAuth: []
       requestBody:
@@ -2061,6 +2063,83 @@ paths:
       responses:
         "200":
           description: OK
+
+  /v1/tokens/balance:
+    post:
+      tags: [AdminPlatform]
+      operationId: tokensBalance
+      summary: Saldo de tokens del tenant
+      description: |
+        JWT de cualquier usuario. El saldo es el de `clientId` del actor.
+        `super_admin` puede pasar `targetClientId`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokensActorRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokensBalanceResponse"
+
+  /v1/tokens/ledger:
+    post:
+      tags: [AdminPlatform]
+      operationId: tokensLedger
+      summary: Historial de cobros de tokens
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/TokensActorRequest"
+                - type: object
+                  properties:
+                    limit: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokensLedgerResponse"
+
+  /v1/tokens/consume:
+    post:
+      tags: [AdminPlatform]
+      operationId: tokensConsume
+      summary: Cobrar tokens (idempotente por refFolio)
+      description: |
+        Descuenta `cost` del saldo. El mismo `clientId` + `refFolio` no se cobra dos veces (`alreadyCharged`).
+        409 `insufficient_tokens` si no alcanza. 400 `invalid_cost` o `invalid_action`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokensConsumeRequest"
+      responses:
+        "200":
+          description: Cobrado o ya cobrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokensConsumeResponse"
+        "400":
+          description: invalid_cost o invalid_action
+        "409":
+          description: insufficient_tokens
 
   /v1/admin/users/invite:
     post:
@@ -3192,6 +3271,10 @@ components:
         status: { type: string }
         tokenLimit: { type: integer }
         tokensUsed: { type: integer }
+        operatingCountries:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatingCountry"
         users:
           type: array
           items:
@@ -3246,6 +3329,11 @@ components:
             billingContact: { type: string }
             billingEmail: { type: string, format: email }
             paymentMethod: { type: string }
+            operatingCountries:
+              type: array
+              description: Si se omite, queda `["mexico"]`.
+              items:
+                $ref: "#/components/schemas/OperatingCountry"
 
     PlatformClientUpdateRequest:
       allOf:
@@ -3264,6 +3352,78 @@ components:
             paymentMethod: { type: string }
             nextInvoice: { type: string, format: date }
             complianceOfficerUserId: { type: integer, nullable: true }
+            operatingCountries:
+              type: array
+              description: Omitirlo no cambia el valor. Un código inválido responde 400.
+              items:
+                $ref: "#/components/schemas/OperatingCountry"
+
+    OperatingCountry:
+      type: string
+      enum: [mexico, colombia, costarica, guatemala]
+
+    TokensActorRequest:
+      allOf:
+        - $ref: "#/components/schemas/AdminActorRequest"
+        - type: object
+          properties:
+            targetClientId:
+              type: integer
+              description: Solo `super_admin` puede consultar otra empresa.
+
+    TokensBalanceResponse:
+      type: object
+      required: [success, limit, used, remaining]
+      properties:
+        success: { type: boolean }
+        limit: { type: integer }
+        used: { type: integer }
+        remaining: { type: integer }
+
+    TokensLedgerItem:
+      type: object
+      required: [id, cost, action, label, timestamp]
+      properties:
+        id: { type: string }
+        cost: { type: integer }
+        action:
+          type: string
+          enum: [screening, background_check, monitoring, rescreen, other]
+        label: { type: string }
+        timestamp: { type: integer, description: Epoch millis }
+        refFolio: { type: string }
+
+    TokensLedgerResponse:
+      type: object
+      required: [success, items]
+      properties:
+        success: { type: boolean }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokensLedgerItem"
+
+    TokensConsumeRequest:
+      allOf:
+        - $ref: "#/components/schemas/TokensActorRequest"
+        - type: object
+          required: [cost, action]
+          properties:
+            cost: { type: integer, minimum: 1 }
+            action:
+              type: string
+              enum: [screening, background_check, monitoring, rescreen, other]
+            label: { type: string }
+            refFolio: { type: string }
+
+    TokensConsumeResponse:
+      allOf:
+        - $ref: "#/components/schemas/TokensBalanceResponse"
+        - type: object
+          properties:
+            ok: { type: boolean }
+            alreadyCharged: { type: boolean }
+            code: { type: string }
 
     PlatformClientMutationResponse:
       type: object
