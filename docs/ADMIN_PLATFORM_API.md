@@ -82,6 +82,29 @@ Body: `{ "targetClientId" }` → pone `clients.tokens_used = 0`.
 
 ---
 
+## Tokens del tenant (`/v1/tokens/*`)
+
+Cualquier usuario con JWT. El saldo es el de `clientId` del actor. `super_admin` puede pasar `targetClientId` para otra empresa. El cobro es idempotente por `client_id` + `refFolio`.
+
+### POST /v1/tokens/balance
+
+Body: `clientId`, `userId` del actor. Respuesta: `{ "success", "limit", "used", "remaining" }`.
+
+### POST /v1/tokens/ledger
+
+Body: lo anterior y opcional `limit` (1–200, default 50). Respuesta: `{ "success", "items": [{ "id", "cost", "action", "label", "timestamp", "refFolio"? }] }`.
+
+### POST /v1/tokens/consume
+
+Body: `cost` (entero > 0), `action` (`screening` | `background_check` | `monitoring` | `rescreen` | `other`), opcional `label` y `refFolio`.
+
+- 200 `{ "success": true, "ok": true, "alreadyCharged": false, "limit", "used", "remaining" }` si descontó.
+- 200 con `alreadyCharged: true` si ese `refFolio` ya estaba en `token_ledger` (no vuelve a descontar).
+- 409 `{ "success": false, "code": "insufficient_tokens", "limit", "used", "remaining" }` si no alcanza.
+- 400 `invalid_cost` o `invalid_action`.
+
+---
+
 ## Usuarios plataforma (`/v1/admin/users/*`)
 
 ### POST /v1/admin/users/list

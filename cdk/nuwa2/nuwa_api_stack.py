@@ -588,6 +588,11 @@ class NuwaApiStack(Stack):
             "POST", admin_integration, api_key_required=False
         )
 
+        tokens = v1.add_resource("tokens")
+        tokens.add_resource("balance").add_method("POST", admin_integration, api_key_required=False)
+        tokens.add_resource("ledger").add_method("POST", admin_integration, api_key_required=False)
+        tokens.add_resource("consume").add_method("POST", admin_integration, api_key_required=False)
+
         docs = v1.add_resource("documents")
         docs.add_resource("presign").add_method("POST", documents_integration, api_key_required=False)
         docs.add_resource("upload-complete").add_method("POST", documents_integration, api_key_required=False)

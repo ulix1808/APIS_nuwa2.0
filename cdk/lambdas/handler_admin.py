@@ -34,6 +34,7 @@ from nuwa_admin_platform_pg import (
     require_super_admin,
 )
 from nuwa_password import hash_password
+from nuwa_tokens_pg import tokens_balance, tokens_consume, tokens_ledger
 from nuwa_rbac import can_manage_company, can_manage_users
 from nuwa_supabase import fetch_user_with_role, rest_json
 
@@ -385,6 +386,14 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             if actor["role_slug"] == "super_admin":
                 return _resp(200, admin_users_delete_platform(body, fallback_user_id=int(actor["id"])))
             return users_delete(actor, body)
+
+        if path.endswith("/tokens/balance"):
+            return _resp(200, tokens_balance(actor, body))
+        if path.endswith("/tokens/ledger"):
+            return _resp(200, tokens_ledger(actor, body))
+        if path.endswith("/tokens/consume"):
+            status, payload = tokens_consume(actor, body)
+            return _resp(status, payload)
 
         # Panel admin plataforma (BFF /v2/admin) — super_admin only
         try:

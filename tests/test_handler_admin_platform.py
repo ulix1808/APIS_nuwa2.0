@@ -172,6 +172,28 @@ def test_admin_users_delete_hard_deletes_for_super_admin() -> None:
     legacy.assert_not_called()
 
 
+def test_tokens_balance_route_for_tenant_admin() -> None:
+    ha = _load_handler_admin()
+    admin_actor = {
+        "id": 9,
+        "client_id": 4,
+        "role_slug": "admin",
+        "email": "a@b.com",
+        "full_name": "Ana",
+    }
+    with mock.patch.object(ha, "fetch_user_with_role", return_value=admin_actor):
+        with mock.patch.object(
+            ha,
+            "tokens_balance",
+            return_value={"success": True, "limit": 10, "used": 1, "remaining": 9},
+        ) as mock_bal:
+            body = {"clientId": 4, "userId": 9}
+            out = ha.handler(_event("/v1/tokens/balance", body), None)
+    assert out["statusCode"] == 200
+    assert json.loads(out["body"])["remaining"] == 9
+    mock_bal.assert_called_once()
+
+
 def test_clients_list_forbidden_for_admin() -> None:
     ha = _load_handler_admin()
     admin_actor = {
