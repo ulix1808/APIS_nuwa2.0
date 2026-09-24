@@ -522,7 +522,10 @@ class NuwaApiStack(Stack):
         reports_integration = apigw.LambdaIntegration(reports_fn, timeout=api_integration_timeout)
         entities_integration = apigw.LambdaIntegration(entities_fn, timeout=api_integration_timeout)
         documents_integration = apigw.LambdaIntegration(documents_fn, timeout=api_integration_timeout)
-        admin_integration = apigw.LambdaIntegration(admin_fn, timeout=api_integration_timeout)
+        # Una sentencia de permiso por método (sin test-invoke) para no pasar el límite de 20 KB.
+        admin_integration = apigw.LambdaIntegration(
+            admin_fn, timeout=api_integration_timeout, allow_test_invoke=False
+        )
         auth_integration = apigw.LambdaIntegration(auth_fn, timeout=api_integration_timeout)
 
         v1 = api.root.add_resource("v1")
