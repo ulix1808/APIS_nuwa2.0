@@ -8,6 +8,7 @@ from unittest import mock
 
 import pytest
 
+import nuwa_admin_platform_pg as admin_pg
 from nuwa_admin_platform_pg import (
     _countries_from_row,
     _map_app_role_to_id,
@@ -19,11 +20,17 @@ from nuwa_admin_platform_pg import (
     admin_users_update_platform,
     clients_create,
     clients_list,
+    clients_update,
     parse_operating_countries,
     require_super_admin,
     team_users_list,
 )
 from nuwa_errors import SupabaseRestError
+
+
+@pytest.fixture(autouse=True)
+def _reset_legal_column_flag() -> None:
+    admin_pg._legal_incidents_column_ready = False
 
 
 def test_require_super_admin_allows() -> None:
@@ -157,6 +164,7 @@ def test_clients_list_returns_stats(mock_conn) -> None:
             "next_invoice": None,
             "compliance_officer_user_id": None,
             "operating_countries": ["colombia", "costarica"],
+            "legal_incidents_enabled": True,
             "created_at": "2026-01-01",
             "company_name": "Nuwa",
         }
@@ -179,6 +187,7 @@ def test_clients_list_returns_stats(mock_conn) -> None:
 
     mock_conn.side_effect = lambda: _fake_conn(
         [
+            None,  # ALTER legal_incidents_enabled
             rows,
             [user_row],
             usage_row,
@@ -190,6 +199,7 @@ def test_clients_list_returns_stats(mock_conn) -> None:
     assert len(out["clients"]) == 1
     assert out["clients"][0]["name"] == "Nuwa"
     assert out["clients"][0]["operatingCountries"] == ["colombia", "costarica"]
+    assert out["clients"][0]["legalIncidentsEnabled"] is True
     assert out["clients"][0]["usage"]["screenings"] == 10
     assert out["stats"]["totalClients"] == 1
     assert out["stats"]["totalTokensConsumed"] == 100
@@ -220,6 +230,7 @@ def test_clients_create_stores_operating_countries(mock_conn) -> None:
             return super().execute(sql, params)
 
     script: list[Any] = [
+        None,  # ALTER legal_incidents_enabled
         {"id": 8},
         None,
         {
@@ -231,6 +242,7 @@ def test_clients_create_stores_operating_countries(mock_conn) -> None:
             "token_limit": 2000,
             "tokens_used": 0,
             "operating_countries": ["mexico", "guatemala"],
+            "legal_incidents_enabled": False,
         },
         None,
     ]
@@ -244,8 +256,52 @@ def test_clients_create_stores_operating_countries(mock_conn) -> None:
         {"name": "Sadah", "rfc": "sad", "operatingCountries": ["México", "Guatemala"]},
     )
     assert out["client"]["operatingCountries"] == ["mexico", "guatemala"]
+    assert out["client"]["legalIncidentsEnabled"] is False
     insert_params = next(params for sql, params in seen if "operating_countries" in sql)
-    assert insert_params[-1] == ["mexico", "guatemala"]
+    assert insert_params[-2] == ["mexico", "guatemala"]
+    assert insert_params[-1] is False
+
+
+@mock.patch("nuwa_admin_platform_pg._conn")
+def test_clients_update_stores_legal_incidents_enabled(mock_conn) -> None:
+    seen: list[tuple[str, Any]] = []
+
+    class _Rec(_FakeConn):
+        def execute(self, sql: str, params: Any = None) -> _FakeCursor:
+            seen.append((sql, params))
+            return super().execute(sql, params)
+
+    returned = {
+        "id": 1,
+        "name": "Nuwa",
+        "rfc": "RFC1",
+        "plan": "professional",
+        "status": "active",
+        "token_limit": 2000,
+        "tokens_used": 0,
+        "operating_countries": ["mexico"],
+        "legal_incidents_enabled": True,
+        "company_name": "Nuwa",
+    }
+    script: list[Any] = [
+        None,  # ALTER
+        None,  # ensure client row insert
+        None,  # ensure usage insert
+        None,  # UPDATE legal_incidents_enabled
+        returned,  # CLIENT_SELECT
+        [],  # users
+        {"screenings": 0, "background_checks": 0, "monitoring": 0, "targeted": 0},
+    ]
+
+    @contextmanager
+    def _cm():
+        yield _Rec(script)
+
+    mock_conn.side_effect = lambda: _cm()
+    out = clients_update({"targetClientId": 1, "legalIncidentsEnabled": True})
+    assert out["client"]["legalIncidentsEnabled"] is True
+    legal_sql = next(sql for sql, _ in seen if "legal_incidents_enabled = %s" in sql)
+    assert "UPDATE clients SET legal_incidents_enabled" in legal_sql
 
 
 @mock.patch("nuwa_admin_platform_pg.hash_password", return_value="pbkdf2_sha256$s$hash")

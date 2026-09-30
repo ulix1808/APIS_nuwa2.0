@@ -3400,6 +3400,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OperatingCountry"
+        legalIncidentsEnabled:
+          type: boolean
+          description: Habilita Incidencias Legales / Buho Legal para el cliente.
         users:
           type: array
           items:
@@ -3459,6 +3462,10 @@ components:
               description: Si se omite, queda `["mexico"]`.
               items:
                 $ref: "#/components/schemas/OperatingCountry"
+            legalIncidentsEnabled:
+              type: boolean
+              default: false
+              description: Si se omite, queda `false`.
 
     PlatformClientUpdateRequest:
       allOf:
@@ -3482,6 +3489,9 @@ components:
               description: Omitirlo no cambia el valor. Un código inválido responde 400.
               items:
                 $ref: "#/components/schemas/OperatingCountry"
+            legalIncidentsEnabled:
+              type: boolean
+              description: Omitirlo no cambia el valor. Un valor no booleano responde 400.
 
     OperatingCountry:
       type: string

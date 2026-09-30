@@ -28,6 +28,9 @@ def test_openapi_parses() -> None:
     summary = data["components"]["schemas"]["ReportSummaryItem"]["properties"]
     assert "groupName" in summary
     assert "operatingCountries" in data["components"]["schemas"]["PlatformClient"]["properties"]
+    assert "legalIncidentsEnabled" in data["components"]["schemas"]["PlatformClient"]["properties"]
+    assert "legalIncidentsEnabled" in data["components"]["schemas"]["PlatformClientCreateRequest"]["allOf"][1]["properties"]
+    assert "legalIncidentsEnabled" in data["components"]["schemas"]["PlatformClientUpdateRequest"]["allOf"][1]["properties"]
     audit_create = data["paths"]["/v1/audit/create"]["post"]["description"]
     assert "x-monitoring-worker-secret" in audit_create
     assert "/v1/auth/password/change" in data["paths"]

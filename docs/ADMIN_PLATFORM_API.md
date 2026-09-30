@@ -62,15 +62,17 @@ Body: `{ "clientId", "userId", "targetClientId" }` → `{ "success", "client", "
 
 ### POST /v1/clients/create
 
-Body: `name`, `rfc` (requeridos), opcionales `legalRep`, `address`, `sector`, `plan`, `tokenLimit`, `billingContact`, `billingEmail`, `paymentMethod`, `operatingCountries`.
+Body: `name`, `rfc` (requeridos), opcionales `legalRep`, `address`, `sector`, `plan`, `tokenLimit`, `billingContact`, `billingEmail`, `paymentMethod`, `operatingCountries`, `legalIncidentsEnabled`.
 
 `operatingCountries` es un arreglo de `mexico`, `colombia`, `costarica`, `guatemala` (uno o más, sin repetir). Si no viene, queda `["mexico"]`. La columna es `clients.operating_countries` (`TEXT[]`, default `ARRAY['mexico']`, script BFF `028_client_operating_countries.sql`). `get`, `list` y `update` devuelven el mismo campo. En `update`, omitirlo no lo cambia; un valor inválido responde 400.
+
+`legalIncidentsEnabled` (boolean, default `false`) habilita la fuente Incidencias Legales / Buho Legal para ese cliente. Columna `clients.legal_incidents_enabled` (script BFF `029_client_legal_incidents.sql`; la Lambda también hace `ADD COLUMN IF NOT EXISTS`). `get`, `list` y `update` lo devuelven. En `update`, omitirlo no lo cambia.
 
 Crea fila en `companies` + `clients` + `client_token_usage`. El BFF debe llamar después a `POST /v1/clients/storage/init`.
 
 ### POST /v1/clients/update
 
-Body: `targetClientId` + campos parciales (`name`, `rfc`, `tokenLimit`, …).
+Body: `targetClientId` + campos parciales (`name`, `rfc`, `tokenLimit`, `operatingCountries`, `legalIncidentsEnabled`, …).
 
 ### POST /v1/clients/suspend | /reactivate | /delete
 

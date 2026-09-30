@@ -98,6 +98,56 @@ def _countries_from_body(body: dict[str, Any]) -> list[str] | None:
     return parsed
 
 
+def _parse_bool_flag(raw: Any) -> bool | None:
+    """None si no se puede interpretar; True/False en caso contrario."""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)) and raw in (0, 1):
+        return bool(raw)
+    if isinstance(raw, str):
+        t = raw.strip().lower()
+        if t in ("1", "true", "t", "yes", "on"):
+            return True
+        if t in ("0", "false", "f", "no", "off"):
+            return False
+    return None
+
+
+def _legal_incidents_from_row(row: dict[str, Any]) -> bool:
+    return bool(row.get("legal_incidents_enabled"))
+
+
+def _legal_incidents_from_body(body: dict[str, Any]) -> bool | None:
+    """None si el body no trae el campo."""
+    if "legalIncidentsEnabled" in body:
+        raw = body.get("legalIncidentsEnabled")
+    elif "legal_incidents_enabled" in body:
+        raw = body.get("legal_incidents_enabled")
+    else:
+        return None
+    parsed = _parse_bool_flag(raw)
+    if parsed is None:
+        raise SupabaseRestError(400, "legalIncidentsEnabled debe ser boolean.")
+    return parsed
+
+
+_legal_incidents_column_ready = False
+
+
+def _ensure_legal_incidents_column(conn: Any) -> None:
+    """Idempotent: columna BFF/APIs clients.legal_incidents_enabled."""
+    global _legal_incidents_column_ready
+    if _legal_incidents_column_ready:
+        return
+    conn.execute(
+        """
+        ALTER TABLE clients
+          ADD COLUMN IF NOT EXISTS legal_incidents_enabled BOOLEAN NOT NULL DEFAULT FALSE
+        """
+    )
+    _legal_incidents_column_ready = True
+
+
 def require_super_admin(actor: dict[str, Any]) -> None:
     if actor.get("role_slug") != "super_admin":
         raise SupabaseRestError(403, "Solo super_admin.")
@@ -215,6 +265,7 @@ def _client_api(row: dict[str, Any], users: list[dict[str, Any]] | None = None, 
         "createdAt": _iso_date(row.get("created_at")) or "",
         "complianceOfficerUserId": row.get("compliance_officer_user_id"),
         "operatingCountries": _countries_from_row(row),
+        "legalIncidentsEnabled": _legal_incidents_from_row(row),
         "users": users or [],
         "usage": usage or _usage_api(None),
     }
@@ -238,6 +289,7 @@ SELECT
   cl.next_invoice,
   cl.compliance_officer_user_id,
   COALESCE(cl.operating_countries, ARRAY['mexico']::text[]) AS operating_countries,
+  COALESCE(cl.legal_incidents_enabled, FALSE) AS legal_incidents_enabled,
   COALESCE(cl.created_at, co.created_at) AS created_at,
   co.name AS company_name
 FROM companies co
@@ -299,6 +351,7 @@ def clients_list(body: dict[str, Any]) -> dict[str, Any]:
     offset = max(int(body.get("offset") or 0), 0)
 
     with _conn() as conn:
+        _ensure_legal_incidents_column(conn)
         rows = conn.execute(
             f"{CLIENT_SELECT} {where} ORDER BY co.name ASC LIMIT %s OFFSET %s",
             [*params, limit, offset],
@@ -326,6 +379,7 @@ def clients_list(body: dict[str, Any]) -> dict[str, Any]:
 def clients_get(body: dict[str, Any]) -> dict[str, Any]:
     target = int(body["targetClientId"])
     with _conn() as conn:
+        _ensure_legal_incidents_column(conn)
         row = conn.execute(f"{CLIENT_SELECT} WHERE co.client_id = %s", (target,)).fetchone()
         if not row:
             raise SupabaseRestError(404, "Cliente no encontrado.")
@@ -343,8 +397,12 @@ def clients_create(body: dict[str, Any]) -> dict[str, Any]:
     if not name or not rfc:
         raise SupabaseRestError(400, "name y rfc requeridos.")
     countries = _countries_from_body(body) or ["mexico"]
+    legal_enabled = _legal_incidents_from_body(body)
+    if legal_enabled is None:
+        legal_enabled = False
 
     with _conn() as conn:
+        _ensure_legal_incidents_column(conn)
         next_id = conn.execute("SELECT COALESCE(MAX(client_id), 0) + 1 AS id FROM companies").fetchone()
         client_id = int(next_id["id"])
         conn.execute(
@@ -355,8 +413,9 @@ def clients_create(body: dict[str, Any]) -> dict[str, Any]:
             """
             INSERT INTO clients (
               id, name, rfc, legal_rep, address, sector, plan, token_limit,
-              billing_contact, billing_email, payment_method, status, operating_countries
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'active',%s::text[])
+              billing_contact, billing_email, payment_method, status, operating_countries,
+              legal_incidents_enabled
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'active',%s::text[],%s)
             RETURNING *
             """,
             (
@@ -372,6 +431,7 @@ def clients_create(body: dict[str, Any]) -> dict[str, Any]:
                 body.get("billingEmail"),
                 body.get("paymentMethod"),
                 countries,
+                legal_enabled,
             ),
         ).fetchone()
         conn.execute(
@@ -385,6 +445,7 @@ def clients_create(body: dict[str, Any]) -> dict[str, Any]:
 def clients_update(body: dict[str, Any]) -> dict[str, Any]:
     target = int(body["targetClientId"])
     with _conn() as conn:
+        _ensure_legal_incidents_column(conn)
         if body.get("name"):
             conn.execute(
                 "UPDATE companies SET name = %s, updated_at = NOW() WHERE client_id = %s",
@@ -396,6 +457,12 @@ def clients_update(body: dict[str, Any]) -> dict[str, Any]:
             conn.execute(
                 "UPDATE clients SET operating_countries = %s::text[], updated_at = NOW() WHERE id = %s",
                 (countries, target),
+            )
+        legal_enabled = _legal_incidents_from_body(body)
+        if legal_enabled is not None:
+            conn.execute(
+                "UPDATE clients SET legal_incidents_enabled = %s, updated_at = NOW() WHERE id = %s",
+                (legal_enabled, target),
             )
         patch_map = {
             "name": "name",
