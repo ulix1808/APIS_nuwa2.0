@@ -51,12 +51,25 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return json_response(400, {"code": "BAD_REQUEST", "message": "extraKeywords debe ser lista."})
     extra_keywords = [str(x).strip() for x in extras if str(x).strip()][:8]
 
+    raw_variants = body.get("subjectVariants") or body.get("subject_variants") or []
+    if raw_variants is not None and not isinstance(raw_variants, list):
+        return json_response(400, {"code": "BAD_REQUEST", "message": "subjectVariants debe ser lista."})
+    subject_variants = [str(x).strip() for x in raw_variants if str(x).strip()][:6]
+
     fetch_html = body.get("fetchHtml", True)
     if not isinstance(fetch_html, bool):
         fetch_html = str(fetch_html).lower() not in ("0", "false", "no")
 
-    log_phase("serper", f"query={query[:80]!r} extras={len(extra_keywords)} fetchHtml={fetch_html}")
-    result = run_serper_goog_search(query, extra_keywords=extra_keywords, fetch_html=fetch_html)
+    log_phase(
+        "serper",
+        f"query={query[:80]!r} variants={len(subject_variants)} extras={len(extra_keywords)} fetchHtml={fetch_html}",
+    )
+    result = run_serper_goog_search(
+        query,
+        extra_keywords=extra_keywords,
+        fetch_html=fetch_html,
+        subject_variants=subject_variants or None,
+    )
 
     # 503 → BFF cae a path local (misma lógica) en vez de tratar hits=[] como "sin noticias".
     if result.get("success") is False:

@@ -27,10 +27,14 @@ El BFF la llama desde `grok-search-v2` y usa `hits` como seeds del pass Grok `go
 ## Contrato
 
 - Auth: `Authorization: Bearer <JWT>`
-- Body: `{ clientId, searchQuery, extraKeywords?, fetchHtml? }`
+- Body: `{ clientId, searchQuery, subjectVariants?, extraKeywords?, fetchHtml? }`
+  - `subjectVariants` (opcional): lista de órdenes de nombre PF (p.ej. `["Juan Pérez", "Pérez Juan"]`).
+    La Lambda corre **todas** las variantes en **una** invocación (jobs Serper en paralelo).
+    El BFF debe mandar una sola POST (no N llamadas).
 - 200: `{ success, hits, allHits, meta }`
   - `hits` = seeds enriquecidos (para Grok)
   - `allHits` = cap Serper pre-filtro (cobertura / logs)
+  - `meta.subjectVariants` / `meta.subjectCount` = variantes efectivamente usadas
 
 ## Notas
 

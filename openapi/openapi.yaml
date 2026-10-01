@@ -545,8 +545,10 @@ paths:
       description: |
         Lambda dedicada (fuera de VPC): queries Serper nombre-solo + keyword chunks ES/EN,
         filtro de seeds por mención del sujeto, enriquecimiento HTML en paralelo (timeout 3s).
+        `subjectVariants` permite varias órdenes de nombre PF en **una** invocación (jobs en paralelo).
         Respuesta lista para el pass Grok `google_serper_seeded` del BFF.
         Secreto: `nuwa2/<env>/serper` (`NUWA_SERPER_SECRET_ARN`).
+        Upstream 403 / fallo total de queries → **503** (`SERPER_UPSTREAM_FORBIDDEN` / `SERPER_UPSTREAM_ERROR`).
       security:
         - BearerAuth: []
       requestBody:
@@ -561,6 +563,13 @@ paths:
                 userId: { type: integer }
                 searchQuery: { type: string, minLength: 3 }
                 query: { type: string, description: "Alias de searchQuery" }
+                subjectVariants:
+                  type: array
+                  maxItems: 6
+                  items: { type: string }
+                  description: |
+                    Órdenes alternativas del nombre (p. ej. nombre+apellido y apellido+nombre).
+                    Se deduplican con `searchQuery` y corren en la misma invocación.
                 extraKeywords:
                   type: array
                   items: { type: string }
@@ -571,6 +580,7 @@ paths:
             example:
               clientId: 1
               searchQuery: "Natalia Lucinda Pacheco Chaves"
+              subjectVariants: ["Pacheco Chaves Natalia Lucinda"]
               extraKeywords: []
               fetchHtml: true
       responses:
@@ -604,12 +614,29 @@ paths:
                       allCount: { type: integer }
                       seedCount: { type: integer }
                       enrichedCount: { type: integer }
+                      subjectCount: { type: integer }
+                      subjectVariants:
+                        type: array
+                        items: { type: string }
+                      okJobs: { type: integer }
+                      failJobs: { type: integer }
+                      http403: { type: integer }
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "503":
-          $ref: "#/components/responses/ServerError"
+          description: Serper no configurado, key rechazada (403) o todas las queries fallaron
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, enum: [false] }
+                  code:
+                    type: string
+                    enum: [SERPER_NOT_CONFIGURED, SERPER_UPSTREAM_FORBIDDEN, SERPER_UPSTREAM_ERROR]
+                  message: { type: string }
 
   /v1/legal/cjf/search:
     post:

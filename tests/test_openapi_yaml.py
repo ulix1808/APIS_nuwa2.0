@@ -40,6 +40,8 @@ def test_openapi_parses() -> None:
     assert "mustChangePassword" in data["components"]["schemas"]["ChangeOwnPasswordResponse"]["properties"]
     assert "/v1/search/serper" in data["paths"]
     assert data["paths"]["/v1/search/serper"]["post"]["operationId"] == "serperGoogSearch"
+    serper_props = data["paths"]["/v1/search/serper"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+    assert "subjectVariants" in serper_props
     assert "/v1/admin/users/invite" in data["paths"]
     assert "/v1/admin/users/reset-password" in data["paths"]
     entity = data["components"]["schemas"]["EntitySummary"]["properties"]

@@ -96,6 +96,22 @@ def subject_name_tokens(sujeto: str) -> list[str]:
     return [t for t in re.split(r"[^a-z0-9]+", fold(sujeto)) if len(t) >= 3]
 
 
+def unique_subject_names(primary: str, variants: list[str] | None = None) -> list[str]:
+    """Dedupe nombre+apellido / apellido+nombre (y extras) preservando orden."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in [primary, *(variants or [])]:
+        n = re.sub(r"\s+", " ", (raw or "").strip())
+        if len(n) < 3:
+            continue
+        key = fold(n)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(n)
+    return out
+
+
 def name_phrase_in(text: str, sujeto: str) -> bool:
     parts = [p for p in re.split(r"[^a-z0-9]+", fold(sujeto)) if len(p) >= 2]
     if not parts:
@@ -118,6 +134,16 @@ def hit_mentions_subject(sujeto: str, hit: dict[str, Any]) -> bool:
     if len(tokens) <= 2:
         return matched == len(tokens)
     return tokens[0] in blob and tokens[-1] in blob
+
+
+def hit_mentions_any_subject(subjects: list[str], hit: dict[str, Any]) -> bool:
+    if not subjects:
+        return True
+    return any(hit_mentions_subject(s, hit) for s in subjects)
+
+
+def name_phrase_in_any(text: str, subjects: list[str]) -> bool:
+    return any(name_phrase_in(text, s) for s in subjects)
 
 
 def should_omit_host(link: str) -> bool:
@@ -224,7 +250,19 @@ def extract_around_subject(text: str, sujeto: str, radius: int = EXTRACT_RADIUS)
     return text[start:end].strip()
 
 
-def probe_html(link: str, sujeto: str) -> dict[str, Any]:
+def extract_around_any_subject(text: str, subjects: list[str], radius: int = EXTRACT_RADIUS) -> str:
+    for s in subjects:
+        if name_phrase_in(text, s) or hit_mentions_subject(
+            s, {"title": "", "description": text, "link": ""}
+        ):
+            return extract_around_subject(text, s, radius)
+    return text[: min(len(text), radius * 2)]
+
+
+def probe_html(link: str, subjects: list[str] | str) -> dict[str, Any]:
+    subject_list = [subjects] if isinstance(subjects, str) else list(subjects or [])
+    if not subject_list:
+        subject_list = [""]
     try:
         req = Request(
             link,
@@ -240,12 +278,16 @@ def probe_html(link: str, sujeto: str) -> dict[str, Any]:
         if status >= 400:
             return {"ok": False, "nameFound": False, "adverse": False, "extract": "", "status": status}
         body = html_to_text(raw)
-        name_found = name_phrase_in(body, sujeto) or (
-            len(subject_name_tokens(sujeto)) >= 3
-            and hit_mentions_subject(sujeto, {"title": "", "description": body, "link": link})
-        )
+        name_found = False
+        for s in subject_list:
+            if name_phrase_in(body, s) or (
+                len(subject_name_tokens(s)) >= 3
+                and hit_mentions_subject(s, {"title": "", "description": body, "link": link})
+            ):
+                name_found = True
+                break
         adverse = bool(ADVERSE_HINT_RE.search(body))
-        extract = extract_around_subject(body, sujeto) if name_found else ""
+        extract = extract_around_any_subject(body, subject_list) if name_found else ""
         return {
             "ok": True,
             "nameFound": name_found,
@@ -277,45 +319,85 @@ def merge_snippet(snippet: str, extract: str) -> str:
 
 def search_organic(
     api_key: str,
-    sujeto: str,
+    subjects: list[str] | str,
     extra_keywords: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Returns (hits, stats). stats.okJobs==0 + http403 → caller should fail loud."""
-    jobs: list[dict[str, Any]] = [
-        {"q": build_name_only_query(sujeto), "gl": "mx", "hl": "es", "querySource": "name_only", "label": "name-only-es"},
-        {"q": build_name_only_query(sujeto), "gl": "us", "hl": "en", "querySource": "name_only", "label": "name-only-en"},
-    ]
-    for group in chunk_keywords(ADVERSE_KEYWORDS_ES):
-        jobs.append(
+    """Returns (hits, stats). stats.okJobs==0 + http403 → caller should fail loud.
+
+    `subjects`: one or more name-order variants (nombre+apellido / apellido+nombre).
+    All variants run in the same Lambda invocation (parallel Serper jobs).
+    """
+    subject_list = [subjects] if isinstance(subjects, str) else [s for s in (subjects or []) if s]
+    if not subject_list:
+        return [], {"jobCount": 0, "okJobs": 0, "failJobs": 0, "http403": 0, "subjectCount": 0}
+
+    jobs: list[dict[str, Any]] = []
+    seen_q: set[str] = set()
+
+    def push_job(job: dict[str, Any]) -> None:
+        key = f"{job['gl']}|{job['hl']}|{job['q']}"
+        if key in seen_q:
+            return
+        seen_q.add(key)
+        jobs.append(job)
+
+    multi = len(subject_list) > 1
+    for name in subject_list:
+        tag = fold(name)[:48] if multi else ""
+        suffix = f"|{tag}" if tag else ""
+        push_job(
             {
-                "q": build_keyword_group_query(sujeto, group),
+                "q": build_name_only_query(name),
                 "gl": "mx",
                 "hl": "es",
-                "querySource": "keyword",
-                "label": "|".join(group),
+                "querySource": "name_only",
+                "label": f"name-only-es{suffix}",
             }
         )
-    for group in chunk_keywords(ADVERSE_KEYWORDS_EN):
-        jobs.append(
+        push_job(
             {
-                "q": build_keyword_group_query(sujeto, group),
+                "q": build_name_only_query(name),
                 "gl": "us",
                 "hl": "en",
-                "querySource": "keyword",
-                "label": "|".join(group),
+                "querySource": "name_only",
+                "label": f"name-only-en{suffix}",
             }
         )
-    extras = [t.strip() for t in (extra_keywords or []) if t and str(t).strip()]
-    for group in chunk_keywords(extras):
-        jobs.append(
-            {
-                "q": build_keyword_group_query(sujeto, group),
-                "gl": "mx",
-                "hl": "es",
-                "querySource": "keyword",
-                "label": "industry|" + "|".join(group),
-            }
-        )
+
+    for name in subject_list:
+        tag = fold(name)[:48] if multi else ""
+        suffix = f"|{tag}" if tag else ""
+        for group in chunk_keywords(ADVERSE_KEYWORDS_ES):
+            push_job(
+                {
+                    "q": build_keyword_group_query(name, group),
+                    "gl": "mx",
+                    "hl": "es",
+                    "querySource": "keyword",
+                    "label": "|".join(group) + suffix,
+                }
+            )
+        for group in chunk_keywords(ADVERSE_KEYWORDS_EN):
+            push_job(
+                {
+                    "q": build_keyword_group_query(name, group),
+                    "gl": "us",
+                    "hl": "en",
+                    "querySource": "keyword",
+                    "label": "|".join(group) + suffix,
+                }
+            )
+        extras = [t.strip() for t in (extra_keywords or []) if t and str(t).strip()]
+        for group in chunk_keywords(extras):
+            push_job(
+                {
+                    "q": build_keyword_group_query(name, group),
+                    "gl": "mx",
+                    "hl": "es",
+                    "querySource": "keyword",
+                    "label": "industry|" + "|".join(group) + suffix,
+                }
+            )
 
     results: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     ok_jobs = 0
@@ -345,7 +427,7 @@ def search_organic(
                 if err.status == 403:
                     http_403 += 1
 
-    # Preserve job order (name-only first)
+    # Preserve job order (name-only first across all variants)
     by_label = {(j["label"], j["gl"], j["hl"]): org for j, org in results}
     ordered: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     for job in jobs:
@@ -382,21 +464,31 @@ def search_organic(
         "okJobs": ok_jobs,
         "failJobs": fail_jobs,
         "http403": http_403,
+        "subjectCount": len(subject_list),
+        "subjectVariants": subject_list,
     }
     return hits, stats
 
 
-def select_seeds(sujeto: str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def select_seeds(subjects: list[str] | str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    subject_list = [subjects] if isinstance(subjects, str) else list(subjects or [])
     filtered = [
         h
         for h in hits
-        if h.get("querySource") == "name_only" or hit_mentions_subject(sujeto, h)
+        if h.get("querySource") == "name_only" or hit_mentions_any_subject(subject_list, h)
     ]
     chosen = filtered if filtered else list(hits)
     return chosen[:MAX_SERPER_HITS]
 
 
-def enrich_with_html(sujeto: str, hits: list[dict[str, Any]], *, fetch_html: bool = True) -> list[dict[str, Any]]:
+def enrich_with_html(
+    subjects: list[str] | str,
+    hits: list[dict[str, Any]],
+    *,
+    fetch_html: bool = True,
+) -> list[dict[str, Any]]:
+    subject_list = [subjects] if isinstance(subjects, str) else list(subjects or [])
+    primary = subject_list[0] if subject_list else ""
     pre: list[dict[str, Any]] = []
     for h in hits:
         if should_omit_host(h["link"]):
@@ -412,7 +504,9 @@ def enrich_with_html(sujeto: str, hits: list[dict[str, Any]], *, fetch_html: boo
 
     for hit in pre:
         blob = f"{hit.get('title') or ''}\n{hit.get('description') or ''}"
-        snippet_name = name_phrase_in(blob, sujeto) or hit_mentions_subject(sujeto, hit)
+        snippet_name = name_phrase_in_any(blob, subject_list) or hit_mentions_any_subject(
+            subject_list, hit
+        )
         snippet_adverse = bool(ADVERSE_HINT_RE.search(blob))
         if snippet_name and snippet_adverse:
             hit["keepReason"] = "snippet+adverse"
@@ -438,7 +532,7 @@ def enrich_with_html(sujeto: str, hits: list[dict[str, Any]], *, fetch_html: boo
 
     def do_one(item: tuple[dict[str, Any], bool]) -> dict[str, Any]:
         hit, snippet_name = item
-        probe = probe_html(hit["link"], sujeto)
+        probe = probe_html(hit["link"], subject_list or [primary])
         if not probe.get("ok"):
             hit["keepReason"] = "snippet+name" if snippet_name else "html-fail"
             hit["htmlFetched"] = True
@@ -492,10 +586,15 @@ def run_serper_goog_search(
     *,
     extra_keywords: list[str] | None = None,
     fetch_html: bool = True,
+    subject_variants: list[str] | None = None,
 ) -> dict[str, Any]:
     sujeto = (search_query or "").strip()
     started = time.perf_counter()
     if len(sujeto) < 3:
+        return {"success": True, "hits": [], "allHits": [], "meta": {"elapsedMs": 0, "reason": "short_query"}}
+
+    subjects = unique_subject_names(sujeto, subject_variants)
+    if not subjects:
         return {"success": True, "hits": [], "allHits": [], "meta": {"elapsedMs": 0, "reason": "short_query"}}
 
     api_key = get_serper_api_key()
@@ -509,13 +608,13 @@ def run_serper_goog_search(
             "meta": {"elapsedMs": 0},
         }
 
-    all_hits, serper_stats = search_organic(api_key, sujeto, extra_keywords)
+    all_hits, serper_stats = search_organic(api_key, subjects, extra_keywords)
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
     # Fail loud: invalid/forbidden API key must not look like "no Google hits".
     if serper_stats.get("okJobs", 0) == 0 and serper_stats.get("http403", 0) > 0:
         print(
-            f"SerperGoogSearch FORBIDDEN: sujeto={sujeto[:80]!r} "
+            f"SerperGoogSearch FORBIDDEN: sujeto={sujeto[:80]!r} variants={len(subjects)} "
             f"jobs={serper_stats.get('jobCount')} http403={serper_stats.get('http403')} ms={elapsed_ms}"
         )
         return {
@@ -528,7 +627,7 @@ def run_serper_goog_search(
         }
     if serper_stats.get("okJobs", 0) == 0 and serper_stats.get("failJobs", 0) > 0:
         print(
-            f"SerperGoogSearch UPSTREAM_ERROR: sujeto={sujeto[:80]!r} "
+            f"SerperGoogSearch UPSTREAM_ERROR: sujeto={sujeto[:80]!r} variants={len(subjects)} "
             f"failJobs={serper_stats.get('failJobs')} ms={elapsed_ms}"
         )
         return {
@@ -540,12 +639,13 @@ def run_serper_goog_search(
             "meta": {"elapsedMs": elapsed_ms, **serper_stats},
         }
 
-    seeds = select_seeds(sujeto, all_hits)
-    enriched = enrich_with_html(sujeto, seeds, fetch_html=fetch_html)
+    seeds = select_seeds(subjects, all_hits)
+    enriched = enrich_with_html(subjects, seeds, fetch_html=fetch_html)
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     print(
-        f"SerperGoogSearch done: sujeto={sujeto[:80]!r} all={len(all_hits)} "
-        f"seeds={len(seeds)} enriched={len(enriched)} ms={elapsed_ms}"
+        f"SerperGoogSearch done: sujeto={sujeto[:80]!r} variants={len(subjects)} "
+        f"all={len(all_hits)} seeds={len(seeds)} enriched={len(enriched)} ms={elapsed_ms} "
+        f"names={' | '.join(s[:40] for s in subjects)}"
     )
     return {
         "success": True,
