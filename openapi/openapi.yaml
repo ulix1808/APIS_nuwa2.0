@@ -537,6 +537,80 @@ paths:
         "500":
           $ref: "#/components/responses/ServerError"
 
+  /v1/search/serper:
+    post:
+      tags: [Search]
+      operationId: serperGoogSearch
+      summary: Google adverse-media via Serper (SerperGoogSearch)
+      description: |
+        Lambda dedicada (fuera de VPC): queries Serper nombre-solo + keyword chunks ES/EN,
+        filtro de seeds por mención del sujeto, enriquecimiento HTML en paralelo (timeout 3s).
+        Respuesta lista para el pass Grok `google_serper_seeded` del BFF.
+        Secreto: `nuwa2/<env>/serper` (`NUWA_SERPER_SECRET_ARN`).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientId, searchQuery]
+              properties:
+                clientId: { type: integer }
+                userId: { type: integer }
+                searchQuery: { type: string, minLength: 3 }
+                query: { type: string, description: "Alias de searchQuery" }
+                extraKeywords:
+                  type: array
+                  items: { type: string }
+                  description: Términos de industria (máx. 8)
+                fetchHtml:
+                  type: boolean
+                  default: true
+            example:
+              clientId: 1
+              searchQuery: "Natalia Lucinda Pacheco Chaves"
+              extraKeywords: []
+              fetchHtml: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  hits:
+                    type: array
+                    description: Seeds enriquecidos para Grok
+                    items:
+                      type: object
+                      properties:
+                        title: { type: string }
+                        link: { type: string }
+                        description: { type: string }
+                        engine: { type: string }
+                        querySource: { type: string, enum: [name_only, keyword] }
+                        keepReason: { type: string }
+                  allHits:
+                    type: array
+                    description: Cap de URLs Serper antes del filtro HTML (para cobertura)
+                  meta:
+                    type: object
+                    properties:
+                      elapsedMs: { type: integer }
+                      allCount: { type: integer }
+                      seedCount: { type: integer }
+                      enrichedCount: { type: integer }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServerError"
+
   /v1/legal/cjf/search:
     post:
       tags: [Legal]

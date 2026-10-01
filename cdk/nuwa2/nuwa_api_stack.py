@@ -313,6 +313,45 @@ class NuwaApiStack(Stack):
             handler="handler_search.handler",
             **lambda_kwargs,
         )
+        # SerperGoogSearch: salida a Internet (fuera de VPC). HTML enrich + Serper API.
+        serper_secret_name = f"{TAG_VALUE_PROJECT}/{env}/serper"
+        reuse_serper_secret = bool(self.node.try_get_context("reuseSerperSecret"))
+        if reuse_serper_secret:
+            serper_secret = secretsmanager.Secret.from_secret_name_v2(
+                self,
+                "SerperApiKeySecret",
+                serper_secret_name,
+            )
+        else:
+            serper_secret = secretsmanager.Secret(
+                self,
+                "SerperApiKeySecret",
+                secret_name=serper_secret_name,
+                description=(
+                    "Serper API key (texto plano o JSON {\"api_key\":\"...\"}). "
+                    "Usado por Lambda SerperGoogSearch /v1/search/serper."
+                ),
+                removal_policy=RemovalPolicy.RETAIN,
+            )
+        serper_fn = lambda_.Function(
+            self,
+            "SerperGoogSearchLambda",
+            function_name=f"{prefix}-lambda-serper-goog-search",
+            handler="handler_serper.handler",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            code=lambda_code,
+            timeout=Duration.seconds(70),
+            memory_size=512,
+            environment={
+                "NUWA_ENV": env,
+                "NUWA_SERPER_SECRET_ARN": serper_secret.secret_arn,
+                "NUWA_APP_CRYPTO_SECRET_ARN": app_crypto_secret.secret_arn,
+                "NUWA_APP_CRYPTO_SECRET_NAME": app_crypto_name,
+            },
+            log_retention=logs.RetentionDays.TWO_WEEKS,
+        )
+        serper_secret.grant_read(serper_fn)
+        app_crypto_secret.grant_read(serper_fn)
         legal_fn = lambda_.Function(
             self,
             "LegalLambda",
@@ -426,6 +465,7 @@ class NuwaApiStack(Stack):
         )
         for fn in (sources_fn, chunks_fn, search_fn, legal_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
             fn.add_to_role_policy(app_crypto_resource_allow)
+        serper_fn.add_to_role_policy(app_crypto_resource_allow)
 
         api = apigw.RestApi(
             self,
@@ -555,7 +595,12 @@ class NuwaApiStack(Stack):
             "POST", chunks_integration, api_key_required=False
         )
 
-        v1.add_resource("search").add_method("POST", search_integration, api_key_required=False)
+        search_resource = v1.add_resource("search")
+        search_resource.add_method("POST", search_integration, api_key_required=False)
+        serper_integration = apigw.LambdaIntegration(serper_fn, timeout=api_integration_timeout)
+        search_resource.add_resource("serper").add_method(
+            "POST", serper_integration, api_key_required=False
+        )
 
         legal_integration = apigw.LambdaIntegration(legal_fn, timeout=api_integration_timeout)
         legal = v1.add_resource("legal")
@@ -750,6 +795,8 @@ class NuwaApiStack(Stack):
             sources_fn,
             chunks_fn,
             search_fn,
+            serper_fn,
+            serper_secret,
             legal_fn,
             reports_fn,
             entities_fn,
@@ -826,6 +873,18 @@ class NuwaApiStack(Stack):
             description="Sitio estático público con Swagger UI + openapi.yaml (S3 website endpoint, HTTP).",
         )
 
+        CfnOutput(
+            self,
+            "SerperSecretArn",
+            value=serper_secret.secret_arn,
+            description="ARN del secreto Serper (nuwa2/<env>/serper). PutStringValue con la API key tras el primer deploy.",
+        )
+        CfnOutput(
+            self,
+            "SerperGoogSearchFunctionName",
+            value=serper_fn.function_name,
+            description="Lambda SerperGoogSearch — POST /v1/search/serper",
+        )
         CfnOutput(
             self,
             "MonitoringWorkerSecretArn",
