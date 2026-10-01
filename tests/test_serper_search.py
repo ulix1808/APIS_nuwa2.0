@@ -9,11 +9,13 @@ ROOT = Path(__file__).resolve().parents[1] / "cdk" / "lambdas"
 sys.path.insert(0, str(ROOT))
 
 from nuwa_serper_search import (  # noqa: E402
+    SerperUpstreamError,
     build_keyword_group_query,
     build_name_only_query,
     enrich_with_html,
     hit_mentions_subject,
     name_phrase_in,
+    run_serper_goog_search,
     select_seeds,
     should_omit_host,
 )
@@ -78,3 +80,19 @@ def test_select_seeds_and_snippet_adverse_without_html():
     assert len(enriched) == 1
     assert enriched[0]["keepReason"] == "snippet+adverse"
     assert "trellis" in enriched[0]["link"]
+
+
+def test_run_serper_fails_loud_on_http_403(monkeypatch):
+    """Invalid Serper key must not return success with empty hits (BFF would miss Trellis)."""
+    monkeypatch.setenv("SERPER_API_KEY", "invalid-key-for-test")
+
+    def boom(*_args, **_kwargs):
+        raise SerperUpstreamError("HTTP Error 403: Forbidden", status=403)
+
+    monkeypatch.setattr("nuwa_serper_search._serper_post", boom)
+    result = run_serper_goog_search("Natalia Lucinda Pacheco Chaves", fetch_html=False)
+    assert result["success"] is False
+    assert result["code"] == "SERPER_UPSTREAM_FORBIDDEN"
+    assert result["hits"] == []
+    assert result["meta"]["http403"] >= 1
+    assert result["meta"]["okJobs"] == 0

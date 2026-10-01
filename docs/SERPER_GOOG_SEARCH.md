@@ -38,3 +38,22 @@ El BFF la llama desde `grok-search-v2` y usa `hits` como seeds del pass Grok `go
 - Timeout 70s, memoria 512 MB.
 - BFF fallback local si upstream 404/503/error (`lib/nuwa-serper-client.ts`).
 - Forzar local: `SERPER_USE_LOCAL=1` en el BFF.
+- Si Serper responde **403** (key inválida), la Lambda devuelve **503** `SERPER_UPSTREAM_FORBIDDEN`
+  (no `200` con `hits=[]`). Así el BFF hace fallback local en vez de “sin menciones”.
+
+## Smoke post-deploy (obligatorio)
+
+Tras cargar el secreto, verificar que la key viva responde (no basta el unit test offline):
+
+```bash
+KEY=$(aws secretsmanager get-secret-value --secret-id nuwa2/prod/serper \
+  --region us-east-1 --query SecretString --output text)
+curl -sS -o /tmp/serper-smoke.json -w "%{http_code}\n" \
+  -X POST https://google.serper.dev/search \
+  -H "X-API-KEY: $KEY" -H "Content-Type: application/json" \
+  -d '{"q":"\"Natalia Lucinda Pacheco Chaves\"","gl":"us","hl":"en","num":3}'
+# Esperado: http 200 y organic.length > 0
+```
+
+Unit tests (`tests/test_serper_search.py`) cubren queries/seeds/HTML y el fail-loud 403
+con mock; **no** validan el secreto desplegado en AWS.

@@ -157,6 +157,14 @@ def get_serper_api_key() -> str:
     return raw.strip()
 
 
+class SerperUpstreamError(Exception):
+    """Raised when google.serper.dev rejects or fails a query."""
+
+    def __init__(self, message: str, *, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
 def _serper_post(api_key: str, q: str, gl: str, hl: str, num: int) -> list[dict[str, Any]]:
     payload = json.dumps({"q": q, "gl": gl, "hl": hl, "num": num}).encode("utf-8")
     req = Request(
@@ -165,8 +173,13 @@ def _serper_post(api_key: str, q: str, gl: str, hl: str, num: int) -> list[dict[
         headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
         method="POST",
     )
-    with urlopen(req, timeout=45) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urlopen(req, timeout=45) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as ex:
+        raise SerperUpstreamError(str(ex), status=int(ex.code or 0) or None) from ex
+    except URLError as ex:
+        raise SerperUpstreamError(str(ex.reason or ex), status=None) from ex
     organic = data.get("organic") or []
     return organic if isinstance(organic, list) else []
 
@@ -262,7 +275,12 @@ def merge_snippet(snippet: str, extract: str) -> str:
     return f"{base}\n[HTML] {ex}"[:1200]
 
 
-def search_organic(api_key: str, sujeto: str, extra_keywords: list[str] | None = None) -> list[dict[str, Any]]:
+def search_organic(
+    api_key: str,
+    sujeto: str,
+    extra_keywords: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Returns (hits, stats). stats.okJobs==0 + http403 → caller should fail loud."""
     jobs: list[dict[str, Any]] = [
         {"q": build_name_only_query(sujeto), "gl": "mx", "hl": "es", "querySource": "name_only", "label": "name-only-es"},
         {"q": build_name_only_query(sujeto), "gl": "us", "hl": "en", "querySource": "name_only", "label": "name-only-en"},
@@ -300,18 +318,32 @@ def search_organic(api_key: str, sujeto: str, extra_keywords: list[str] | None =
         )
 
     results: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    ok_jobs = 0
+    fail_jobs = 0
+    http_403 = 0
 
-    def run_job(job: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def run_job(
+        job: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], SerperUpstreamError | None]:
         try:
             organic = _serper_post(api_key, job["q"], job["gl"], job["hl"], NUM_PER_QUERY)
-            return job, organic
+            return job, organic, None
+        except SerperUpstreamError as ex:
+            print(f"Serper fail [{job.get('label')}]: {ex}")
+            return job, [], ex
         except Exception as ex:  # noqa: BLE001
             print(f"Serper fail [{job.get('label')}]: {ex}")
-            return job, []
+            return job, [], SerperUpstreamError(str(ex), status=None)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=SERPER_CONCURRENCY) as pool:
-        for job, organic in pool.map(run_job, jobs):
+        for job, organic, err in pool.map(run_job, jobs):
             results.append((job, organic))
+            if err is None:
+                ok_jobs += 1
+            else:
+                fail_jobs += 1
+                if err.status == 403:
+                    http_403 += 1
 
     # Preserve job order (name-only first)
     by_label = {(j["label"], j["gl"], j["hl"]): org for j, org in results}
@@ -341,8 +373,17 @@ def search_organic(api_key: str, sujeto: str, extra_keywords: list[str] | None =
                 }
             )
             if len(hits) >= MAX_SERPER_HITS:
-                return hits
-    return hits
+                break
+        if len(hits) >= MAX_SERPER_HITS:
+            break
+
+    stats = {
+        "jobCount": len(jobs),
+        "okJobs": ok_jobs,
+        "failJobs": fail_jobs,
+        "http403": http_403,
+    }
+    return hits, stats
 
 
 def select_seeds(sujeto: str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -468,7 +509,37 @@ def run_serper_goog_search(
             "meta": {"elapsedMs": 0},
         }
 
-    all_hits = search_organic(api_key, sujeto, extra_keywords)
+    all_hits, serper_stats = search_organic(api_key, sujeto, extra_keywords)
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+
+    # Fail loud: invalid/forbidden API key must not look like "no Google hits".
+    if serper_stats.get("okJobs", 0) == 0 and serper_stats.get("http403", 0) > 0:
+        print(
+            f"SerperGoogSearch FORBIDDEN: sujeto={sujeto[:80]!r} "
+            f"jobs={serper_stats.get('jobCount')} http403={serper_stats.get('http403')} ms={elapsed_ms}"
+        )
+        return {
+            "success": False,
+            "code": "SERPER_UPSTREAM_FORBIDDEN",
+            "message": "Serper API rechazó la key (HTTP 403). Revisar secreto nuwa2/<env>/serper.",
+            "hits": [],
+            "allHits": [],
+            "meta": {"elapsedMs": elapsed_ms, **serper_stats},
+        }
+    if serper_stats.get("okJobs", 0) == 0 and serper_stats.get("failJobs", 0) > 0:
+        print(
+            f"SerperGoogSearch UPSTREAM_ERROR: sujeto={sujeto[:80]!r} "
+            f"failJobs={serper_stats.get('failJobs')} ms={elapsed_ms}"
+        )
+        return {
+            "success": False,
+            "code": "SERPER_UPSTREAM_ERROR",
+            "message": "Todas las queries Serper fallaron (red/upstream).",
+            "hits": [],
+            "allHits": [],
+            "meta": {"elapsedMs": elapsed_ms, **serper_stats},
+        }
+
     seeds = select_seeds(sujeto, all_hits)
     enriched = enrich_with_html(sujeto, seeds, fetch_html=fetch_html)
     elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -486,5 +557,6 @@ def run_serper_goog_search(
             "seedCount": len(seeds),
             "enrichedCount": len(enriched),
             "fetchHtml": fetch_html,
+            **serper_stats,
         },
     }

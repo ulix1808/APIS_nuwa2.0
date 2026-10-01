@@ -58,8 +58,13 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     log_phase("serper", f"query={query[:80]!r} extras={len(extra_keywords)} fetchHtml={fetch_html}")
     result = run_serper_goog_search(query, extra_keywords=extra_keywords, fetch_html=fetch_html)
 
-    if result.get("success") is False and result.get("code") == "SERPER_NOT_CONFIGURED":
-        return json_response(503, result)
+    # 503 → BFF cae a path local (misma lógica) en vez de tratar hits=[] como "sin noticias".
+    if result.get("success") is False:
+        code = str(result.get("code") or "SERPER_ERROR")
+        status = 503
+        if code == "SERPER_UPSTREAM_FORBIDDEN":
+            status = 503
+        return json_response(status, result)
 
     return json_response(
         200,
