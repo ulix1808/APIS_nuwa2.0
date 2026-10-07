@@ -98,7 +98,9 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         lim = int(body.get("limit", 20))
     except (TypeError, ValueError):
         lim = 20
-    lim = max(1, min(lim, 100))
+    # Screening needs all matching chunks across sources; 100 hid SAT/SABG behind Incidencias.
+    # Keep a safety ceiling only (payload / Lambda time), not a business top-N.
+    lim = max(1, min(lim, 5000))
 
     try:
         wst = float(body.get("wordSimilarityThreshold", 0.38))
