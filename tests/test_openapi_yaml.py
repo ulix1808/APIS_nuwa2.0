@@ -38,6 +38,8 @@ def test_openapi_parses() -> None:
     change = data["paths"]["/v1/auth/password/change"]["post"]
     assert change["security"] == [{"BearerAuth": []}]
     assert "mustChangePassword" in data["components"]["schemas"]["ChangeOwnPasswordResponse"]["properties"]
+    search_desc = data["paths"]["/v1/search"]["post"]["description"]
+    assert "OIC Responsable" in search_desc
     assert "/v1/search/serper" in data["paths"]
     assert data["paths"]["/v1/search/serper"]["post"]["operationId"] == "serperGoogSearch"
     serper_props = data["paths"]["/v1/search/serper"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]

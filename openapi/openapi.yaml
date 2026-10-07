@@ -515,6 +515,12 @@ paths:
         lista de fuentes (`sourceIds`).
 
         El backend invoca la función PostgreSQL `search_risk_entities` y enriquece cada resultado con `sourceName` desde el catálogo.
+
+        **Post-filtro OIC Responsable:** si el chunk tiene campos parseables (JSON o `clave: valor`) y la
+        query solo coincide con el campo de autoridad (`OIC Responsable` / equivalentes) y **no** con el
+        sujeto sancionado (`nombre`, razón social, etc.), ese hit se excluye. Evita falsos positivos
+        (p. ej. buscar `PEMEX` y sacar un proveedor cuyo expediente lista PEMEX como OIC). Chunks sin
+        esos campos no se tocan.
       security:
         - BearerAuth: []
       requestBody:

@@ -13,6 +13,7 @@ from nuwa_http import json_response
 from nuwa_api_auth import jwt_allows_client, require_jwt
 from nuwa_supabase import invoke_search_risk_entities
 from nuwa_obs_log import log_handler_enter, log_phase
+from oic_responsable_filter import filter_oic_only_hits
 from source_risk_level import validate_source_risk_levels_list
 
 
@@ -124,7 +125,15 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             {"code": "SEARCH_ERROR", "message": e.body},
         )
 
-    results = [_map_row(r) for r in raw_rows]
+    # Field-aware post-filter: FTS/trgm match whole chunk_text, so a query can
+    # hit only "OIC Responsable" (authority) and falsely surface the sanctioned party.
+    # Drop those hits early; leave other sources / non-OIC chunks unchanged.
+    raw_query = (body.get("query") or "").strip()
+    filtered_rows, excluded_n = filter_oic_only_hits(raw_rows, query=raw_query)
+    if excluded_n:
+        log_phase("search", f"oic_responsable_excluded={excluded_n} query={raw_query[:80]}")
+
+    results = [_map_row(r) for r in filtered_rows]
     out: dict[str, Any] = {
         "clientId": client_id,
         "requestId": body.get("requestId"),
