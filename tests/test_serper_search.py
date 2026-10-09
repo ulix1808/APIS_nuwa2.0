@@ -52,6 +52,19 @@ def test_omit_facebook():
     assert not should_omit_host("https://trellis.law/coverage/x")
 
 
+def test_omit_directories_and_social_by_whole_label():
+    for url in (
+        "https://www.aliadojudicial.com/directorio/co/camara-comercio/nombres/hernandez-hernandez-joel",
+        "https://x.com/someone/status/1",
+        "https://m.facebook.com/story.php?id=1",
+        "https://www.amazon.com.mx/dp/1",
+        "https://youtu.be/abc",
+    ):
+        assert should_omit_host(url), url
+    for url in ("https://www.fox.com/news", "https://www.dropbox.com/s/a.pdf", "https://www.foxnews.com/x"):
+        assert not should_omit_host(url), url
+
+
 def test_select_seeds_and_snippet_adverse_without_html():
     hits = [
         {

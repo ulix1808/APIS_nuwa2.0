@@ -49,8 +49,10 @@ ADVERSE_KEYWORDS_EN = [
 OMIT_HOST_FRAGMENTS = (
     "amazon.", "linkedin.", "seccionamarilla.", "idcrawl.", "facebook.",
     "instagram.", "tiktok.", "twitter.", "x.com", "youtube.", "securityspace.",
-    "huaweicloud.", "zhihu.", "indiamart.", "linguee.",
+    "huaweicloud.", "zhihu.", "indiamart.", "linguee.", "aliadojudicial.",
 )
+# Whole-domain matches: a substring test would drop fox.com / dropbox.com for "x.com".
+OMIT_EXACT_HOSTS = frozenset({"x.com", "t.co", "fb.com", "fb.me", "youtu.be", "lnkd.in"})
 
 NOISE_RE = re.compile(
     r"township|huawei|cdn\s+service|securityspace|known\s+ports|"
@@ -153,7 +155,11 @@ def should_omit_host(link: str) -> bool:
         return False
     if not host:
         return False
-    return any(frag.rstrip(".") in host for frag in OMIT_HOST_FRAGMENTS)
+    host = host.removeprefix("www.")
+    if any(host == h or host.endswith("." + h) for h in OMIT_EXACT_HOSTS):
+        return True
+    labels = host.split(".")
+    return any(frag.rstrip(".") in labels for frag in OMIT_HOST_FRAGMENTS if "." not in frag.rstrip("."))
 
 
 def is_noise(title: str, snippet: str, link: str) -> bool:
