@@ -745,6 +745,25 @@ def documents_get_pg(body: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
+EXTRACTED_JSON_PATCH_KEYS = ("relations", "documentRisk", "relationsSource", "relationsAnalyzedAt")
+
+
+def _extracted_json_patch(raw: Any) -> dict[str, Any]:
+    """Keys of extracted_json that may be written after finalize without re-running the pipeline."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise SupabaseRestError(400, "extractedJsonPatch debe ser objeto")
+    unknown = sorted(k for k in raw if k not in EXTRACTED_JSON_PATCH_KEYS)
+    if unknown:
+        raise SupabaseRestError(400, f"extractedJsonPatch no admite: {', '.join(unknown)}")
+    if "relations" in raw and not isinstance(raw["relations"], list):
+        raise SupabaseRestError(400, "extractedJsonPatch.relations debe ser lista")
+    if "documentRisk" in raw and raw["documentRisk"] is not None and not isinstance(raw["documentRisk"], dict):
+        raise SupabaseRestError(400, "extractedJsonPatch.documentRisk debe ser objeto")
+    return dict(raw)
+
+
 def documents_update_pg(body: dict[str, Any]) -> dict[str, Any]:
     client_id = int(body["clientId"])
     document_id = str(body["documentId"])
@@ -769,6 +788,10 @@ def documents_update_pg(body: dict[str, Any]) -> dict[str, Any]:
         pe = body["primaryEntityId"]
         sets.append("primary_entity_id = %s")
         vals.append(str(pe) if pe else None)
+    patch = _extracted_json_patch(body.get("extractedJsonPatch"))
+    if patch:
+        sets.append("extracted_json = COALESCE(extracted_json, '{}'::jsonb) || %s")
+        vals.append(Json(patch))
 
     if not sets:
         raise SupabaseRestError(400, "Nada que actualizar")

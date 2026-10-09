@@ -4178,6 +4178,26 @@ components:
             category: { type: string }
             description: { type: string }
             tags: { type: array, items: { type: string } }
+            extractedJsonPatch:
+              type: object
+              description: >
+                Se mezcla en extracted_json sin re-ejecutar finalize. Solo admite
+                relations, documentRisk, relationsSource y relationsAnalyzedAt.
+              additionalProperties: false
+              properties:
+                relations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      partyType: { type: string, enum: [individual, organization] }
+                      role: { type: string }
+                      relatedTo: { type: string }
+                      basis: { type: string, enum: [explicit, inferred] }
+                documentRisk: { type: object, nullable: true }
+                relationsSource: { type: string }
+                relationsAnalyzedAt: { type: string, format: date-time }
 
     DocumentDeleteRequest:
       allOf:
