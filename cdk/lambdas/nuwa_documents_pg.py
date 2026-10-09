@@ -790,7 +790,7 @@ def documents_update_pg(body: dict[str, Any]) -> dict[str, Any]:
         vals.append(str(pe) if pe else None)
     patch = _extracted_json_patch(body.get("extractedJsonPatch"))
     if patch:
-        sets.append("extracted_json = COALESCE(extracted_json, '{}'::jsonb) || %s")
+        sets.append("extracted_json = COALESCE(extracted_json, '{}'::jsonb) || %s::jsonb")
         vals.append(Json(patch))
 
     if not sets:

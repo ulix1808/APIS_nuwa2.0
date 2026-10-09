@@ -59,7 +59,7 @@ def test_update_merges_patch_into_extracted_json() -> None:
         {"clientId": 1, "documentId": "d1", "extractedJsonPatch": {"relations": RELATIONS}}
     )
     sql, params = conn.execute.call_args_list[0].args
-    assert "extracted_json = COALESCE(extracted_json, '{}'::jsonb) || %s" in sql
+    assert "extracted_json = COALESCE(extracted_json, '{}'::jsonb) || %s::jsonb" in sql
     assert params[0].obj == {"relations": RELATIONS}
     assert params[-2:] == ["d1", 1]
     conn.commit.assert_called_once()
