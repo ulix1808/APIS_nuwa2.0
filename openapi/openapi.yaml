@@ -677,6 +677,13 @@ paths:
                 tipoFilter:
                   type: string
                   description: Override explícito (`persona` | `empresa`)
+                lastName:
+                  type: string
+                  description: |
+                    Apellidos del sujeto (opcional). Con `persona` y query de 3+ tokens se
+                    excluyen menciones con nombre completo y otro apellido
+                    ("Joel López Hernández" al buscar "Joel Hernández Hernández");
+                    el conteo va en `excludedSurnameConflicts`.
                 limit: { type: integer, default: 25, maximum: 100 }
             example:
               clientId: 1
@@ -2946,6 +2953,9 @@ components:
         source: { type: string, example: postgres }
         category: { type: string, enum: [legal] }
         matchedList: { type: string, example: "CJF / SISE" }
+        excludedSurnameConflicts:
+          type: integer
+          description: Menciones de persona descartadas por nombre completo con otro apellido.
 
     ReportRecord:
       type: object

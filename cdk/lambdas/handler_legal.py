@@ -12,6 +12,7 @@ from nuwa_config import DatabaseConfigError, SupabaseConfigError, ensure_data_ba
 from nuwa_errors import SupabaseRestError
 from nuwa_http import json_response
 from nuwa_obs_log import log_handler_enter, log_phase
+from surname_conflict_filter import has_surname_conflict, person_name_tokens
 
 
 def _response(status: int, body: dict[str, Any]) -> dict[str, Any]:
@@ -90,8 +91,23 @@ def _handle_search(body: dict[str, Any]) -> dict[str, Any]:
     if isinstance(body.get("tipoFilter"), str) and body["tipoFilter"].strip():
         tipo = body["tipoFilter"].strip().lower()
 
-    rows = search_cjf_mentions_pg(query=q, limit=lim, tipo_filter=tipo)
-    hits = [_map_hit(r, i) for i, r in enumerate(rows)]
+    lim = max(1, min(lim, 100))
+    check_surnames = tipo == "persona" and len(person_name_tokens(q)) >= 3
+    fetch_limit = min(lim * 4, 100) if check_surnames else lim
+    rows = search_cjf_mentions_pg(query=q, limit=fetch_limit, tipo_filter=tipo)
+    excluded = 0
+    if check_surnames:
+        last_name = str(body.get("lastName") or "")
+        kept = []
+        for r in rows:
+            if has_surname_conflict(q, str(r.get("nombre") or ""), last_name):
+                excluded += 1
+                continue
+            kept.append(r)
+        if excluded:
+            log_phase("legal", f"excluded_surname_conflicts={excluded}")
+        rows = kept
+    hits = [_map_hit(r, i) for i, r in enumerate(rows[:lim])]
     return _response(
         200,
         {
@@ -101,6 +117,7 @@ def _handle_search(body: dict[str, Any]) -> dict[str, Any]:
             "source": "postgres",
             "category": "legal",
             "matchedList": "CJF / SISE",
+            "excludedSurnameConflicts": excluded,
         },
     )
 
