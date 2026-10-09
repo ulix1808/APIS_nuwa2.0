@@ -521,6 +521,11 @@ paths:
         sujeto sancionado (`nombre`, razón social, etc.), ese hit se excluye. Evita falsos positivos
         (p. ej. buscar `PEMEX` y sacar un proveedor cuyo expediente lista PEMEX como OIC). Chunks sin
         esos campos no se tocan.
+
+        **Post-filtro apellido (PF):** con `subjectType: individual` y query de 3+ tokens de nombre,
+        se excluyen hits cuyo nombre estructurado tiene otro apellido (p. ej. "Joel Hernández García"
+        al buscar "Joel Hernández Hernández"). Nombres incompletos se conservan. Respuesta incluye
+        `excludedSurnameConflicts`.
       security:
         - BearerAuth: []
       requestBody:
@@ -2833,6 +2838,16 @@ components:
               type: number
               format: float
               default: 0.38
+            subjectType:
+              type: string
+              enum: [individual]
+              description: >
+                With "individual" and a query of 3+ name tokens, drops hits whose structured
+                name has a different surname ("Joel Hernández García" for "Joel Hernández
+                Hernández"). Incomplete names ("Joel Hernández") are kept.
+            lastName:
+              type: string
+              description: Subject surnames from the form; defaults to the last two query tokens.
 
     SearchResultItem:
       type: object
@@ -2888,6 +2903,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SearchResultItem"
+        excludedSurnameConflicts:
+          type: integer
+          description: Hits descartados por conflicto de apellido (solo con subjectType=individual).
+        backend:
+          type: string
+          enum: [postgresql, supabase]
 
     LegalCjfHit:
       type: object

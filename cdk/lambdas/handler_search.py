@@ -14,6 +14,7 @@ from nuwa_api_auth import jwt_allows_client, require_jwt
 from nuwa_supabase import invoke_search_risk_entities
 from nuwa_obs_log import log_handler_enter, log_phase
 from oic_responsable_filter import filter_oic_only_hits
+from surname_conflict_filter import filter_surname_conflicts
 from source_risk_level import validate_source_risk_levels_list
 
 
@@ -133,11 +134,21 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if excluded_n:
         log_phase("search", f"oic_responsable_excluded={excluded_n} query={raw_query[:80]}")
 
+    surname_excluded = 0
+    if body.get("subjectType") == "individual":
+        last_name = body.get("lastName") if isinstance(body.get("lastName"), str) else ""
+        filtered_rows, surname_excluded = filter_surname_conflicts(
+            filtered_rows, query=raw_query, last_name=last_name
+        )
+        if surname_excluded:
+            log_phase("search", f"surname_conflict_excluded={surname_excluded} query={raw_query[:80]}")
+
     results = [_map_row(r) for r in filtered_rows]
     out: dict[str, Any] = {
         "clientId": client_id,
         "requestId": body.get("requestId"),
         "results": results,
+        "excludedSurnameConflicts": surname_excluded,
         "backend": "postgresql" if is_database_mode() else "supabase",
     }
     return _response(200, out)
