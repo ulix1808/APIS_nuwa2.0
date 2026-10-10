@@ -200,12 +200,32 @@ def fetch_user_with_role_pg(*, user_id: int) -> dict[str, Any] | None:
     }
 
 
+# Virtual select column for list views: the group fields of report_json (fallback for rows
+# without group_* columns) instead of the whole JSON, which is ~100 KB per report.
+_REPORT_JSON_GROUP_SQL = """jsonb_build_object(
+      'metadatos', jsonb_build_object(
+        'groupId', report_json->'metadatos'->'groupId',
+        'groupName', report_json->'metadatos'->'groupName',
+        'groupRole', report_json->'metadatos'->'groupRole'),
+      'apiResponse', jsonb_build_object(
+        'groupId', report_json->'apiResponse'->'groupId',
+        'groupName', report_json->'apiResponse'->'groupName',
+        'groupRole', report_json->'apiResponse'->'groupRole')
+    ) AS report_json"""
+
+
 def _reports_get(parts: dict[str, str]) -> list[dict[str, Any]]:
     sel = parts.get("select", "*")
+    requested = [c.strip() for c in sel.split(",") if c.strip()]
+    group_only_json = "report_json_group" in requested
+    if group_only_json:
+        sel = ",".join(c for c in requested if c not in ("report_json_group", "report_json")) or "id"
     try:
         cols = _safe_ident_list(sel, _REPORT_COLS)
     except SupabaseRestError:
         cols = "*"
+    if group_only_json and cols != "*":
+        cols = f"{cols}, {_REPORT_JSON_GROUP_SQL}"
 
     where = ["1=1"]
     params: list[Any] = []

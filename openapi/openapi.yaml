@@ -1355,7 +1355,10 @@ paths:
       summary: Listar o consultar reportes (query string, sin body)
       description: |
         Al menos uno de `clientId`, `userId` o `folio`. Opcional: `includePayload=true` (objeto completo con `payload`),
-        `nextKey` (paginación), `limit` (1–100, default 20).
+        `nextKey` (paginación), `limit` (default 20; máximo **500** sin payload, **100** con `includePayload=true`).
+
+        Sin `includePayload`, el listado es liviano: no carga el JSON completo del reporte (solo metadatos de grupo
+        necesarios para `groupId`/`groupName`/`groupRole` cuando las columnas están vacías).
 
         Lista solo reportes `status=active` que **no** estén ligados a entidades con `status=deleted`
         (por `entity_id`, `parent_entity_id` o nombre huérfano en `entidad`).
@@ -1384,12 +1387,14 @@ paths:
         - name: includePayload
           in: query
           schema: { type: string, enum: ["true", "false"] }
+          description: Si es true, cada ítem puede incluir `payload` (JSON completo) y el `limit` máximo baja a 100.
         - name: nextKey
           in: query
           schema: { type: string }
         - name: limit
           in: query
-          schema: { type: integer, default: 20, maximum: 100 }
+          schema: { type: integer, default: 20, maximum: 500 }
+          description: Máximo 500 sin payload; 100 si `includePayload=true` (el servidor recorta).
         - name: actorUserId
           in: query
           schema: { type: integer, format: int32 }
@@ -1533,12 +1538,14 @@ paths:
         - name: includePayload
           in: query
           schema: { type: string, enum: ["true", "false"] }
+          description: Si es true, cada ítem puede incluir `payload` (JSON completo) y el `limit` máximo baja a 100.
         - name: nextKey
           in: query
           schema: { type: string }
         - name: limit
           in: query
-          schema: { type: integer, default: 20, maximum: 100 }
+          schema: { type: integer, default: 20, maximum: 500 }
+          description: Máximo 500 sin payload; 100 si `includePayload=true` (el servidor recorta).
         - name: actorUserId
           in: query
           schema: { type: integer, format: int32 }

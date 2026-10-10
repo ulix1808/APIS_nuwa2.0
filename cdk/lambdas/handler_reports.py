@@ -110,13 +110,16 @@ def _apply_rbac(actor: dict[str, Any] | None, rows: list[dict[str, Any]]) -> lis
     return [r for r in rows if can_read_report(actor, r)]
 
 
-def _select_cols_for_list() -> str:
+def _select_cols_for_list(include_payload: bool = True) -> str:
+    # Without payload, read only the group fields of report_json (Postgres mode): the full
+    # JSON is ~100 KB per row and made a 500-row list take ~5 s just to be discarded.
+    json_col = "report_json" if include_payload or not is_database_mode() else "report_json_group"
     return (
         "id,folio,client_id,created_by_user_id,entidad,tipo_consulta,fecha,hora,"
         "nivel_riesgo,nivel_riesgo_numerico,total_listas_original,total_listas_activas,"
         "total_descartadas,es_actualizacion,total_listas,total_menciones,grok_resumen,"
         "grok_falsos_positivos,grok_confirmados,created_at,updated_at,status,"
-        "group_id,group_name,group_role,search_context,report_json"
+        f"group_id,group_name,group_role,search_context,{json_col}"
     )
 
 
@@ -128,7 +131,8 @@ def handle_get(event: dict[str, Any]) -> dict[str, Any]:
     include_payload = _truthy(q, "includePayload")
     next_tok = q.get("nextKey") or ""
     lim = _int(q, "limit") or 20
-    lim = max(1, min(lim, 100))
+    # Summaries only (no JSON) unless includePayload: 500 rows is one call, not five.
+    lim = max(1, min(lim, 100 if include_payload else 500))
     offset = decode_next_key(next_tok) or 0
 
     worker = monitoring_worker_secret_ok(event)
@@ -182,7 +186,7 @@ def handle_get(event: dict[str, Any]) -> dict[str, Any]:
             {"message": "Debes enviar al menos uno de estos parámetros: clientId, userId o folio"},
         )
 
-    base = f"select={_select_cols_for_list()}&status=eq.active&order=created_at.desc"
+    base = f"select={_select_cols_for_list(include_payload)}&status=eq.active&order=created_at.desc"
 
     try:
         if folio:
