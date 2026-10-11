@@ -681,6 +681,10 @@ class NuwaApiStack(Stack):
         escalations.add_resource("save").add_method("POST", reports_integration, api_key_required=False)
         escalations.add_resource("resolve").add_method("POST", reports_integration, api_key_required=False)
 
+        relations = v1.add_resource("relations")
+        relations.add_resource("query").add_method("POST", reports_integration, api_key_required=False)
+        relations.add_resource("sync").add_method("POST", reports_integration, api_key_required=False)
+
         admin = v1.add_resource("admin")
         ac = admin.add_resource("companies")
         ac.add_resource("list").add_method("POST", admin_integration, api_key_required=False)

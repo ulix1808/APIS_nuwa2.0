@@ -1587,6 +1587,9 @@ paths:
         Campos de grupo en raíz y en `report.metadatos`: `groupId`, `groupName`, `groupRole`, `parentEntityId`, `relationshipRole`.
         Columnas SQL: `entity_id`, `parent_entity_id`, `group_id`, `group_name`, `group_role`.
 
+        **Relaciones (opcional):** `entityRelations` — filas calculadas por el BFF; reemplazan las de `entity_relations`
+        para ese folio. Un fallo al sincronizar relaciones **no** hace fallar el guardado del reporte.
+
         **Auth worker (monitoreo continuo):** `x-monitoring-worker-secret`. Requiere `entityId` (raíz o `report.metadatos`) y valida que la entidad pertenezca a `clientId`.
       security:
         - BearerAuth: []
@@ -1685,6 +1688,8 @@ paths:
         JWT de usuario o **`x-monitoring-worker-secret`** (monitoreo continuo).
         Con worker auth, `clientId` en body es obligatorio y debe coincidir con el reporte (`folio`).
         `groupId`, `groupName` y `groupRole` pueden ir en la raíz o en `report.metadatos`. Si esta actualización no los manda, no se borra el valor ya guardado.
+
+        Opcional: `entityRelations` (mismo contrato que en save) reemplaza las relaciones del folio.
       security:
         - BearerAuth: []
       requestBody:
@@ -1834,6 +1839,90 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /v1/relations/query:
+    post:
+      tags: [Relations]
+      summary: Vínculos de entidades por nombre, alias o id (entrada y salida)
+      description: |
+        Devuelve relaciones activas de `entity_relations` donde alguna de las `keys`
+        (claves normalizadas por el BFF) o `entityIds` aparece como sujeto del reporte o como
+        entidad relacionada. `available=false` si la migración aún no está aplicada.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clientId: { type: integer }
+                keys: { type: array, items: { type: string } }
+                entityIds: { type: array, items: { type: string } }
+                limit: { type: integer, maximum: 2000 }
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/relations/sync:
+    post:
+      tags: [Relations]
+      summary: Reemplazar las relaciones de un reporte
+      description: |
+        Reemplaza en una transacción las filas de `entity_relations` del folio. Lo usa el BFF
+        para backfill; los guardados normales envían `entityRelations` en /v1/reports/save|update.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [folio, rows]
+              properties:
+                clientId: { type: integer }
+                folio: { type: string }
+                subjectEntityId: { type: string }
+                reportCreatedAt: { type: string }
+                rows:
+                  type: array
+                  items:
+                    type: object
+                    required: [subjectName, subjectKey, relatedName, relatedKey]
+                    properties:
+                      subjectName: { type: string }
+                      subjectKey: { type: string }
+                      subjectAliases: { type: array, items: { type: string } }
+                      subjectAliasKeys: { type: array, items: { type: string } }
+                      subjectPartyType: { type: string }
+                      relatedEntityId: { type: string }
+                      relatedName: { type: string }
+                      relatedKey: { type: string }
+                      relatedAliases: { type: array, items: { type: string } }
+                      relatedAliasKeys: { type: array, items: { type: string } }
+                      relatedPartyType: { type: string }
+                      relationType: { type: string }
+                      relationship: { type: string }
+                      riskLevel: { type: string }
+                      confidence: { type: integer }
+                      sourceType: { type: string }
+                      sourceId: { type: string }
+                      sourceUrl: { type: string }
+                      sourceTitle: { type: string }
+                      sourceExcerpt: { type: string }
+      responses:
+        "200":
+          description: OK
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: Tabla entity_relations no existe (falta migración)
 
   /v1/audit/create:
     post:
@@ -3167,6 +3256,14 @@ components:
             relationshipRole:
               type: string
               description: Mismo valor que groupRole para miembros; catálogo PF o PM según partyType del sujeto
+            entityRelations:
+              type: array
+              description: |
+                Filas de vínculos calculadas por el BFF. Si se envía (aunque sea `[]`), reemplaza
+                `entity_relations` del folio. Misma forma que los ítems de `POST /v1/relations/sync`.
+              items:
+                type: object
+                additionalProperties: true
             searchContext:
               type: object
               additionalProperties: true
@@ -3210,6 +3307,12 @@ components:
             groupId: { type: string }
             groupName: { type: string }
             groupRole: { type: string }
+            entityRelations:
+              type: array
+              description: Si se envía, reemplaza las relaciones del folio (mismo contrato que en save).
+              items:
+                type: object
+                additionalProperties: true
             report:
               $ref: "#/components/schemas/ReportEditorialPayload"
             reporte:

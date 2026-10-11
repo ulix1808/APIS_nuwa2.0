@@ -9,6 +9,9 @@ GET|POST /v1/reports/get — query string (body opcional en POST, ignorado):
 POST /v1/reports/save — body { clientId, userId, report | reporte } (objeto con folio y JSON editorial completo).
 POST|PUT /v1/reports/update — body { folio, report | reporte, clientId? }.
 POST /v1/reports/delete — borrado lógico (status=deleted).
+
+save/update: si el body trae `entityRelations` (filas calculadas por el BFF), reemplazan las
+relaciones del folio en entity_relations; nunca hacen fallar el guardado del reporte.
 """
 
 from __future__ import annotations
@@ -257,6 +260,31 @@ def handle_get(event: dict[str, Any]) -> dict[str, Any]:
         return _resp(e.status if 400 <= e.status < 600 else 500, {"message": e.body})
 
 
+def _sync_relations_safely(
+    body: dict[str, Any],
+    client_id: int,
+    folio: str,
+    *,
+    entity_id: Any = None,
+    report_created_at: Any = None,
+) -> None:
+    rows = body.get("entityRelations")
+    if not isinstance(rows, list) or not is_database_mode():
+        return
+    try:
+        from nuwa_relations_pg import replace_report_relations
+
+        replace_report_relations(
+            client_id,
+            folio,
+            rows,
+            subject_entity_id=str(entity_id) if entity_id else None,
+            report_created_at=str(report_created_at) if report_created_at else None,
+        )
+    except Exception as e:  # relations are derived data: the report save already succeeded
+        log_phase("relations_sync", f"failed folio={folio}: {e}")
+
+
 def _folio_exists_globally(folio: str) -> bool:
     rows = rest_json(
         "GET",
@@ -361,6 +389,13 @@ def handle_save(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
             nivel_numerico=meta.get("nivel_riesgo_numerico"),
         )
     item = out[0] if isinstance(out, list) else out
+    _sync_relations_safely(
+        body,
+        client_id,
+        folio,
+        entity_id=entity_id,
+        report_created_at=item.get("created_at") or created_at,
+    )
     return _resp(
         201,
         {
@@ -446,6 +481,13 @@ def handle_update(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]
     rid = existing["id"]
     out = rest_json("PATCH", "reports", query=f"id=eq.{rid}", body=patch)
     updated = out[0] if isinstance(out, list) else out
+    _sync_relations_safely(
+        body,
+        int(existing["client_id"]),
+        folio,
+        entity_id=existing.get("entity_id") or body.get("entityId"),
+        report_created_at=existing.get("created_at"),
+    )
     return _resp(
         200,
         {
@@ -481,6 +523,13 @@ def handle_delete(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]
         query=f"id=eq.{rid}",
         body={"status": "deleted", "updated_at": now_iso_z()},
     )
+    if is_database_mode():
+        try:
+            from nuwa_relations_pg import mark_report_relations_deleted
+
+            mark_report_relations_deleted(int(rows[0]["client_id"]), str(folio))
+        except Exception as e:
+            log_phase("relations_delete", f"failed folio={folio}: {e}")
     return _resp(200, {"message": "Reporte eliminado", "folio": folio})
 
 
@@ -516,6 +565,10 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             import handler_escalations
 
             return handler_escalations.handler(event, context)
+        if "/relations/" in path:
+            import handler_relations
+
+            return handler_relations.handler(event, context)
         return _resp(404, {"message": "Ruta no encontrada", "method": method, "path": path})
     except SupabaseRestError as e:
         return _resp(
