@@ -170,3 +170,39 @@ def test_run_serper_with_subject_variants_one_invocation(monkeypatch):
     assert result["meta"]["subjectCount"] == 2
     assert call_count["n"] == result["meta"]["jobCount"]
     assert any("trellis.law/inverted" in (h.get("link") or "") for h in result["hits"])
+
+
+def test_rank_hits_keyword_hits_naming_subject_first():
+    from nuwa_serper_search import rank_hits
+
+    s = ["Abelardo Maldonado Rosado"]
+    out = rank_hits(
+        s,
+        [
+            {"title": "Notaría 16", "link": "https://a.mx/notaria", "description": "Abelardo Maldonado Rosado notario", "querySource": "name_only"},
+            {"title": "Otra nota", "link": "https://b.mx/x", "description": "sin el nombre", "querySource": "keyword"},
+            # First seen with a snippet that does not name him; a later query's snippet does.
+            {"title": "Surge nueva acusación contra Obispo", "link": "https://diario.mx/obispo", "description": "Ramón Castro, obispo…", "querySource": "keyword"},
+            {"title": "Surge nueva acusación contra Obispo", "link": "https://diario.mx/obispo", "description": "… Abelardo Maldonado Rosado, habrían cometido los ilícitos", "querySource": "keyword"},
+            {"title": "Perfil", "link": "https://c.mx/perfil", "description": "Abelardo Maldonado Rosado", "querySource": "name_only"},
+            # Same URL (other case) from a keyword query: it now counts as a keyword hit too.
+            {"title": "dup", "link": "https://A.mx/notaria", "description": "", "querySource": "keyword"},
+        ],
+    )
+    assert [h["link"] for h in out] == [
+        "https://a.mx/notaria",
+        "https://diario.mx/obispo",
+        "https://c.mx/perfil",
+        "https://b.mx/x",
+    ]
+    assert "Maldonado Rosado" in out[1]["description"]
+    assert out[0]["querySource"] == "name_only"
+    assert not any(k.startswith("_") for h in out for k in h)
+
+
+def test_keywords_cover_criminal_complaints_and_cap_is_60():
+    from nuwa_serper_search import ADVERSE_KEYWORDS_ES, MAX_SERPER_HITS
+
+    for k in ("falsedad", "falsificación", "denuncia", "denunciado", "querella", "acusados"):
+        assert k in ADVERSE_KEYWORDS_ES
+    assert MAX_SERPER_HITS == 60

@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 SERPER_URL = "https://google.serper.dev/search"
-MAX_SERPER_HITS = 40
+MAX_SERPER_HITS = 60
 KEYWORD_CHUNK_SIZE = 3
 SERPER_CONCURRENCY = 10
 HTML_TIMEOUT_SEC = 3.0
@@ -36,6 +36,9 @@ ADVERSE_KEYWORDS_ES = [
     "inhabilitación", "lista negra", "investigado", "imputado", "condenado",
     "sentenciado", "prófugo", "extorsión", "narcotráfico", "crimen organizado",
     "defraudación", "peculado", "EFOS", "judicial", "expedientes", "candidato",
+    # 2026-10-15: notas de denuncias penales que no usan los términos de arriba
+    # (p. ej. "acusados de falsedad en declaraciones judiciales").
+    "falsedad", "falsificación", "denuncia", "denunciado", "querella", "acusados",
 ]
 
 ADVERSE_KEYWORDS_EN = [
@@ -435,35 +438,18 @@ def search_organic(
 
     # Preserve job order (name-only first across all variants)
     by_label = {(j["label"], j["gl"], j["hl"]): org for j, org in results}
-    ordered: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    raw: list[dict[str, Any]] = []
     for job in jobs:
-        key = (job["label"], job["gl"], job["hl"])
-        ordered.append((job, by_label.get(key, [])))
-
-    seen: set[str] = set()
-    hits: list[dict[str, Any]] = []
-    for job, organic in ordered:
-        for row in organic:
-            link = str(row.get("link") or "").strip()
-            if not link or not re.match(r"^https?://", link, re.I):
-                continue
-            key = link.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            hits.append(
+        for row in by_label.get((job["label"], job["gl"], job["hl"]), []):
+            raw.append(
                 {
-                    "title": str(row.get("title") or "").strip() or link,
-                    "link": link,
+                    "title": str(row.get("title") or "").strip(),
+                    "link": str(row.get("link") or "").strip(),
                     "description": str(row.get("snippet") or "").strip(),
-                    "engine": "google",
                     "querySource": job["querySource"],
                 }
             )
-            if len(hits) >= MAX_SERPER_HITS:
-                break
-        if len(hits) >= MAX_SERPER_HITS:
-            break
+    hits = rank_hits(subject_list, raw)[:MAX_SERPER_HITS]
 
     stats = {
         "jobCount": len(jobs),
@@ -474,6 +460,51 @@ def search_organic(
         "subjectVariants": subject_list,
     }
     return hits, stats
+
+
+def rank_hits(subjects: list[str], raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Dedupe by URL and order before the cap:
+    1) hits of an adverse-keyword query whose title/snippet names the subject;
+    2) name-only hits; 3) the remaining keyword hits. Stable within each group.
+
+    A URL seen in several queries keeps a snippet that names the subject if any does
+    (Google returns a different snippet per query); it counts as name_only if a
+    name-only query brought it. Mirrors rankSerperHits in the BFF.
+    """
+    by_key: dict[str, dict[str, Any]] = {}
+    for r in raw:
+        link = (r.get("link") or "").strip()
+        if not link or not re.match(r"^https?://", link, re.I):
+            continue
+        key = link.lower()
+        hit = {"title": r.get("title") or link, "link": link, "description": r.get("description") or ""}
+        names = hit_mentions_any_subject(subjects, hit)
+        prev = by_key.get(key)
+        if prev is None:
+            by_key[key] = {
+                **hit,
+                "engine": "google",
+                "querySource": r.get("querySource") or "keyword",
+                "_kw": r.get("querySource") == "keyword",
+                "_names": names,
+            }
+            continue
+        if r.get("querySource") == "keyword":
+            prev["_kw"] = True
+        else:
+            prev["querySource"] = "name_only"
+        if names and not prev["_names"]:
+            prev["_names"] = True
+            prev["title"] = hit["title"]
+            prev["description"] = hit["description"]
+
+    def tier(h: dict[str, Any]) -> int:
+        if h["_kw"] and h["_names"]:
+            return 0
+        return 1 if h["querySource"] == "name_only" else 2
+
+    rows = sorted(by_key.values(), key=tier)  # sorted() is stable
+    return [{k: v for k, v in h.items() if not k.startswith("_")} for h in rows]
 
 
 def select_seeds(subjects: list[str] | str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
