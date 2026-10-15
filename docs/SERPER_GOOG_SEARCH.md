@@ -33,11 +33,13 @@ El BFF la llama desde `grok-search-v2` y usa `hits` como seeds del pass Grok `go
     El BFF debe mandar una sola POST (no N llamadas).
 - 200: `{ success, hits, allHits, meta }`
   - `hits` = seeds enriquecidos (para Grok)
-  - `allHits` = cap Serper pre-filtro (cobertura / logs)
+  - `allHits` = hasta **60** URLs Serper pre-filtro (cobertura / logs), ordenadas:
+    keyword+nombre del sujeto → name-only → resto keyword
   - `meta.subjectVariants` / `meta.subjectCount` = variantes efectivamente usadas
 
 ## Notas
 
+- Keywords ES incluyen denuncia/falsedad (`falsedad`, `denuncia`, `querella`, `acusados`, …).
 - Lambda **fuera de VPC** (salida a Internet a `google.serper.dev` + HTML GET).
 - Timeout 70s, memoria 512 MB.
 - BFF fallback local si upstream 404/503/error (`lib/nuwa-serper-client.ts`).

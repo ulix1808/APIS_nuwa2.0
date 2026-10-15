@@ -554,10 +554,12 @@ paths:
       operationId: serperGoogSearch
       summary: Google adverse-media via Serper (SerperGoogSearch)
       description: |
-        Lambda dedicada (fuera de VPC): queries Serper nombre-solo + keyword chunks ES/EN,
-        filtro de seeds por mención del sujeto, enriquecimiento HTML en paralelo (timeout 3s).
+        Lambda dedicada (fuera de VPC): queries Serper nombre-solo + keyword chunks ES/EN
+        (incluye términos de denuncia/falsedad), filtro de seeds por mención del sujeto,
+        enriquecimiento HTML en paralelo (timeout 3s).
         `subjectVariants` permite varias órdenes de nombre PF en **una** invocación (jobs en paralelo).
-        Respuesta lista para el pass Grok `google_serper_seeded` del BFF.
+        Antes del cap (**60** URLs), se ordenan: (1) hits de query keyword que nombran al sujeto,
+        (2) name-only, (3) resto de keyword. Respuesta lista para el pass Grok `google_serper_seeded` del BFF.
         Secreto: `nuwa2/<env>/serper` (`NUWA_SERPER_SECRET_ARN`).
         Upstream 403 / fallo total de queries → **503** (`SERPER_UPSTREAM_FORBIDDEN` / `SERPER_UPSTREAM_ERROR`).
       security:
@@ -617,7 +619,7 @@ paths:
                         keepReason: { type: string }
                   allHits:
                     type: array
-                    description: Cap de URLs Serper antes del filtro HTML (para cobertura)
+                    description: Hasta 60 URLs Serper (rankeadas) antes del filtro HTML (cobertura / logs)
                   meta:
                     type: object
                     properties:
