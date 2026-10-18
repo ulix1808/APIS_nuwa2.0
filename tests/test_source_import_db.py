@@ -81,10 +81,10 @@ def _apply(conn, source, mode, rows, key_field="id"):
     headers = list(rows[0].keys())
     mapping = {h: ("id" if h == "RFC" else "nombre" if h == "Nombre" else f"custom:{h}") for h in headers}
     built = core.build_records(headers, rows, mapping, key_field)
-    work = psycopg.connect(CONNINFO, row_factory=dict_row)
+    # Same connection setup as the worker: a read first, then apply_records on an autocommit connection.
+    work = psycopg.connect(CONNINFO, row_factory=dict_row, autocommit=True)
     try:
         src = db.fetch_source(work, int(source["id"]))
-        work.commit()
         return db.apply_records(
             work, source=src, import_id=_import(conn, int(source["id"]), mode), mode=mode, records=built.records,
             key_field=key_field, risk_level=3, visibility="public", entity_type="company", metadata_updates={},
@@ -157,6 +157,17 @@ def test_replace_deletes_everything_first(conn):
     c = _apply(conn, s, "replace", [{"RFC": "Z9", "Nombre": "ZETA", "Monto": "1"}])
     assert (c["removed"], c["inserted"]) == (1, 1)
     assert set(_current(conn, int(s["id"]))) == {"Z9"}
+
+
+def test_refuses_a_connection_with_an_open_transaction(conn):
+    s = _source(conn)
+    work = psycopg.connect(CONNINFO, row_factory=dict_row)  # autocommit off, like the first worker version
+    try:
+        with pytest.raises(RuntimeError):
+            db.apply_records(work, source=s, import_id=_import(conn, int(s["id"]), "sync"), mode="sync", records=[],
+                             key_field="id", risk_level=3, visibility="public", entity_type="company", metadata_updates={})
+    finally:
+        work.close()
 
 
 def test_source_without_key_dedupes_exact_rows(conn):

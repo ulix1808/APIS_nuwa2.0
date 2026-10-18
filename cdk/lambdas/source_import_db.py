@@ -155,7 +155,13 @@ def apply_records(
     metadata_updates: dict[str, str],
     progress: Callable[[str], None] = lambda _m: None,
 ) -> dict[str, int]:
-    """Writes the import in one transaction. Returns counts (inserted, updated, unchanged, removed…)."""
+    """Writes the import in one transaction. Returns counts (inserted, updated, unchanged, removed…).
+
+    conn must be in autocommit mode: otherwise any earlier query opens a transaction, the block below
+    becomes a savepoint and nothing is committed when the connection closes.
+    """
+    if not conn.autocommit:
+        raise RuntimeError("apply_records needs an autocommit connection (see docstring)")
     sid = int(source["id"])
     client_id = int(source["client_id"])
     counts = {"inserted": 0, "updated": 0, "unchanged": 0, "removed": 0, "superseded": 0, "keysAssigned": 0}

@@ -59,7 +59,8 @@ def run_import(import_id: str) -> dict[str, Any]:
         if not built.records:
             raise core.SourceFileError("Ninguna fila tiene datos en las columnas asignadas.")
 
-        conn = db.connect()
+        # autocommit: apply_records' transaction() is then a real transaction that commits.
+        conn = db.connect(autocommit=True)
         try:
             source = db.fetch_source(conn, int(imp["source_id"]))
             if source is None:
