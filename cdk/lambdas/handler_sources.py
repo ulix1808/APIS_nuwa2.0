@@ -184,6 +184,11 @@ def _handle_category_get(event: dict[str, Any], claims: dict[str, Any], path: st
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     log_handler_enter("sources", event, context)
     path = (event.get("path") or "").rstrip("/")
+    if "/sources/imports/" in f"{path}/":
+        # Background source imports share this Lambda (see handler_source_imports).
+        from handler_source_imports import handler as source_imports_handler
+
+        return source_imports_handler(event, context)
     method = (event.get("httpMethod") or "POST").upper()
     if method == "OPTIONS":
         return _response(200, {"message": "ok"})

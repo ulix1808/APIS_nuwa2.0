@@ -394,8 +394,25 @@ class NuwaApiStack(Stack):
             handler="handler_auth.handler",
             **lambda_kwargs,
         )
+        # Source imports: /v1/sources/imports/* runs in the sources Lambda (create + S3 upload URL, start,
+        # get, list); the worker reads the file from S3 and applies it in one transaction, up to 15 min.
+        # The stack is close to CloudFormation's 500-resource limit: no extra API Lambda, no log-retention
+        # custom resource; an async retry is harmless (the worker claims the import atomically).
+        source_import_worker_fn = lambda_.Function(
+            self,
+            "SourceImportWorkerLambda",
+            function_name=f"{prefix}-lambda-source-import-worker",
+            handler="handler_source_import_worker.handler",
+            **{
+                **{k: v for k, v in lambda_kwargs.items() if k != "log_retention"},
+                "timeout": Duration.minutes(15),
+                "memory_size": 3008,
+            },
+        )
+        sources_fn.add_environment("NUWA_SOURCE_IMPORT_WORKER", source_import_worker_fn.function_name)
+        source_import_worker_fn.grant_invoke(sources_fn)
 
-        for fn in (sources_fn, chunks_fn, search_fn, legal_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, legal_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn, source_import_worker_fn):
             url_param.grant_read(fn)
             secret.grant_read(fn)
             db_secret.grant_read(fn)
@@ -440,7 +457,7 @@ class NuwaApiStack(Stack):
                 "StringLike": {"secretsmanager:SecretId": app_crypto_secret_id_patterns}
             },
         )
-        for fn in (sources_fn, chunks_fn, search_fn, legal_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, legal_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn, source_import_worker_fn):
             fn.add_to_role_policy(app_crypto_iam_fix)
 
         # ARN explícito + comodín de sufijo (Secrets Manager añade 6 chars). grant_read / StringLike a veces
@@ -463,7 +480,7 @@ class NuwaApiStack(Stack):
                 _app_crypto_arn_wildcard,
             ],
         )
-        for fn in (sources_fn, chunks_fn, search_fn, legal_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn):
+        for fn in (sources_fn, chunks_fn, search_fn, legal_fn, reports_fn, entities_fn, documents_fn, admin_fn, auth_fn, source_import_worker_fn):
             fn.add_to_role_policy(app_crypto_resource_allow)
         serper_fn.add_to_role_policy(app_crypto_resource_allow)
 
@@ -555,6 +572,8 @@ class NuwaApiStack(Stack):
 
         client_documents_bucket.grant_read_write(documents_fn)
         client_documents_bucket.grant_read_write(admin_fn)
+        client_documents_bucket.grant_read_write(sources_fn)
+        client_documents_bucket.grant_read(source_import_worker_fn)
 
         sources_integration = apigw.LambdaIntegration(sources_fn, timeout=api_integration_timeout)
         chunks_integration = apigw.LambdaIntegration(chunks_fn, timeout=api_integration_timeout)
@@ -585,6 +604,13 @@ class NuwaApiStack(Stack):
         sources.add_resource("get").add_method("POST", sources_integration, api_key_required=False)
         sources.add_resource("update").add_method("POST", sources_integration, api_key_required=False)
         sources.add_resource("delete").add_method("POST", sources_integration, api_key_required=False)
+
+        # create | start | get | list (handler_source_imports); one resource + method for the stack limit.
+        sources.add_resource("imports").add_resource("{action}").add_method(
+            "POST",
+            apigw.LambdaIntegration(sources_fn, timeout=api_integration_timeout, allow_test_invoke=False),
+            api_key_required=False,
+        )
 
         src_cat = v1.add_resource("source-category-id")
         src_cat.add_resource("create").add_method("POST", sources_integration, api_key_required=False)
