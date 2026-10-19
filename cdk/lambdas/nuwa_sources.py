@@ -177,6 +177,10 @@ def update_source(
     if is_database_mode():
         from nuwa_pg_dispatch import update_source_pg
 
+        # Omitted category: let update_source_pg use its own default (leave it as it is).
+        category_kw: dict[str, Any] = (
+            {} if source_category_id is _UPDATE_CATEGORY_OMIT else {"source_category_id": source_category_id}
+        )
         try:
             row = update_source_pg(
                 source_id,
@@ -184,7 +188,7 @@ def update_source(
                 risk_level=risk_level,
                 visibility=visibility,
                 metadata=metadata,
-                source_category_id=source_category_id,
+                **category_kw,
                 viewer_client_id=viewer_client_id,
                 is_super_admin=is_super_admin,
             )
