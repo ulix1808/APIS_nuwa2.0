@@ -44,6 +44,7 @@ def conn():
     c = psycopg.connect(CONNINFO, row_factory=dict_row, autocommit=True)
     c.execute(BASE_SCHEMA)
     c.execute((ROOT / "supabase" / "migrations" / "20261018000000_source_imports.sql").read_text())
+    c.execute((ROOT / "supabase" / "migrations" / "20261019000000_source_records_seen.sql").read_text())
     yield c
     c.close()
 
@@ -176,3 +177,26 @@ def test_source_without_key_dedupes_exact_rows(conn):
     _apply(conn, s, "sync", rows, key_field=None)
     again = _apply(conn, s, "sync", rows + [rows[0]], key_field=None)
     assert (again["inserted"], again["unchanged"], again["removed"]) == (0, 2, 0)
+
+
+def test_incremental_by_content_keeps_every_distinct_version_and_the_last_appearance(conn):
+    """Traceability rule: identical → one row with its last appearance; different → both stay."""
+    s = _source(conn)
+    sid = int(s["id"])
+    jul = [{"RFC": "A1", "Nombre": "ACME", "Monto": "773"}, {"RFC": "B2", "Nombre": "BETA", "Monto": "10"}]
+    _apply(conn, s, "incremental", jul, key_field=None)
+    first = {r["chunk_text"]: r for r in conn.execute(
+        "select chunk_text, first_seen_at, last_seen_at from public.risk_entity_chunks where source_id=%s", (sid,))}
+    oct_ = [{"RFC": "A1", "Nombre": "ACME", "Monto": "$773.00"}, {"RFC": "B2", "Nombre": "BETA", "Monto": "12"}]
+    c = _apply(conn, s, "incremental", oct_, key_field=None)
+    assert (c["unchanged"], c["inserted"], c["updated"], c["removed"]) == (1, 1, 0, 0)
+    rows = conn.execute(
+        "select chunk_text, first_seen_at, last_seen_at from public.risk_entity_chunks where source_id=%s order by first_seen_at",
+        (sid,),
+    ).fetchall()
+    montos = sorted(json.loads(r["chunk_text"])["Monto"] for r in rows)
+    assert montos == ["10", "12", "773"]  # A1 once (same content), B2 in both versions
+    acme = next(r for r in rows if json.loads(r["chunk_text"])["Monto"] == "773")
+    assert acme["last_seen_at"] > first[acme["chunk_text"]]["last_seen_at"]  # seen again in October
+    b2_old = next(r for r in rows if json.loads(r["chunk_text"])["Monto"] == "10")
+    assert b2_old["last_seen_at"] == first[b2_old["chunk_text"]]["last_seen_at"]  # last published in July

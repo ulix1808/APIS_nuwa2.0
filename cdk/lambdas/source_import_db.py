@@ -166,8 +166,11 @@ def apply_records(
     client_id = int(source["client_id"])
     counts = {"inserted": 0, "updated": 0, "unchanged": 0, "removed": 0, "superseded": 0, "keysAssigned": 0}
     meta = source.get("metadata") or {}
-    prev_key_field = meta.get("recordKeyField") if isinstance(meta, dict) else None
+    prev_key_field = (meta.get("recordKeyField") if isinstance(meta, dict) else None) or None
+    key_field = key_field or None
 
+    unchanged_ids: list[Any] = []
+    now = dt.datetime.now(dt.timezone.utc)
     with conn.transaction():
         # One import at a time per source.
         conn.execute("select id from public.sources where id=%s for update", (sid,))
@@ -216,7 +219,8 @@ def apply_records(
             to_update = [
                 (current[k], rec) for k, rec in incoming.items() if k in current and current[k]["row_hash"] != rec.digest
             ]
-            counts["unchanged"] = sum(1 for k, rec in incoming.items() if k in current and current[k]["row_hash"] == rec.digest)
+            unchanged_ids = [current[k]["id"] for k, rec in incoming.items() if k in current and current[k]["row_hash"] == rec.digest]
+            counts["unchanged"] = len(unchanged_ids)
             removed = [r for k, r in current.items() if k not in incoming] if mode == "sync" else []
 
             history = (
@@ -250,11 +254,23 @@ def apply_records(
                 conn.execute(
                     """update public.risk_entity_chunks c
                        set chunk_text=_upd.t, chunk_text_normalized=_upd.n, row_hash=_upd.h,
-                           risk_level=%s, visibility=%s, last_import_id=%s
+                           risk_level=%s, visibility=%s, last_import_id=%s, last_seen_at=now()
                        from _upd where c.id=_upd.id""",
                     (risk_level, visibility, import_id),
                 )
             counts["updated"] = len(to_update)
+
+        if mode != "replace" and unchanged_ids:
+            # Published again without changes: one row, its last appearance moves to this upload.
+            progress(f"Marcando {len(unchanged_ids):,} registros sin cambio como vistos en esta carga")
+            conn.execute("create temp table _seen (id uuid primary key) on commit drop")
+            _copy(conn, "_seen", "id", ((i,) for i in unchanged_ids))
+            conn.execute(
+                """update public.risk_entity_chunks c
+                   set last_seen_at=now(), first_seen_at=coalesce(c.first_seen_at, c.created_at), last_import_id=%s
+                   from _seen where c.id=_seen.id""",
+                (import_id,),
+            )
 
         if to_insert:
             progress(f"Insertando {len(to_insert):,} registros nuevos")
@@ -262,9 +278,9 @@ def apply_records(
                 conn,
                 "public.risk_entity_chunks",
                 "client_id, risk_level, source_id, entity_type, chunk_text, chunk_text_normalized, visibility, "
-                "record_key, row_hash, last_import_id",
+                "record_key, row_hash, last_import_id, first_seen_at, last_seen_at",
                 (
-                    (client_id, risk_level, sid, entity_type, rec.chunk_text, rec.normalized or None, visibility, rec.key, rec.digest, import_id)
+                    (client_id, risk_level, sid, entity_type, rec.chunk_text, rec.normalized or None, visibility, rec.key, rec.digest, import_id, now, now)
                     for rec in to_insert
                 ),
             )

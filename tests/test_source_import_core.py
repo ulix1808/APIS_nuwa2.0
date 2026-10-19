@@ -117,3 +117,15 @@ def test_json_records():
     headers, rows = core.read_json_records(data)
     assert headers == ["nit", "nombre", "monto"]
     assert rows == [{"nit": "123", "nombre": "A", "monto": "5"}]
+
+
+def test_strict_import_spots_new_columns_against_the_saved_mapping():
+    import types
+
+    sys.modules.setdefault("boto3", types.ModuleType("boto3"))  # provided by the Lambda runtime
+    import handler_source_import_worker as w
+
+    mapping = {"RFC": "id", "Nombre": "nombre", "Publicación DOF": "custom:Publicación DOF"}
+    # Repaired / differently cased headers are the same column; "NUEVA" is not in the mapping.
+    assert w._extra_columns(["rfc", "NOMBRE", "PublicaciÛn DOF", "NUEVA"], mapping) == ["NUEVA"]
+    assert w._extra_columns(["RFC", "Nombre", "Publicación DOF"], mapping) == []

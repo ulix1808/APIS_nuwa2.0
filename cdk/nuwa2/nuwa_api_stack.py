@@ -821,6 +821,40 @@ class NuwaApiStack(Stack):
             schedule=events.Schedule.cron(minute="0", hour="*/2"),
         ).add_target(targets.LambdaFunction(monitoring_tick_fn))
 
+        # Monthly automatic source updates (sources with metadata.autoUpdate = "true"): the worker
+        # downloads each file, queues an incremental import and invokes itself for it. Failures go to
+        # the BFF (mail to super admins) with the monitoring worker secret.
+        source_import_worker_fn.add_environment("MONITORING_BFF_URL", str(monitoring_bff_url).rstrip("/"))
+        source_import_worker_fn.add_environment(
+            "MONITORING_WORKER_SECRET", monitoring_worker_secret.secret_value.unsafe_unwrap()
+        )
+        source_import_worker_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["lambda:InvokeFunction"],
+                resources=[
+                    self.format_arn(
+                        service="lambda",
+                        resource="function",
+                        arn_format=ArnFormat.COLON_RESOURCE_NAME,
+                        resource_name=f"{prefix}-lambda-source-import-worker",
+                    )
+                ],
+            )
+        )
+        events.Rule(
+            self,
+            "SourceAutoUpdateSchedule",
+            rule_name=f"{prefix}-source-auto-update",
+            description="Fuentes: actualización automática mensual (día 1, 09:00 UTC)",
+            schedule=events.Schedule.cron(minute="0", hour="9", day="1", month="*", year="*"),
+        ).add_target(
+            targets.LambdaFunction(
+                source_import_worker_fn,
+                event=events.RuleTargetInput.from_object({"autoUpdate": True}),
+                retry_attempts=0,
+            )
+        )
+
         for construct in (
             sources_fn,
             chunks_fn,
