@@ -21,6 +21,7 @@ import json
 import os
 import time
 import traceback
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -202,82 +203,152 @@ def _download(url: str) -> bytes:
     return data
 
 
+def _bff_call(method: str, path: str, timeout: int = 30) -> tuple[int, bytes, dict[str, str]]:
+    base = (os.environ.get("MONITORING_BFF_URL") or "").rstrip("/")
+    secret = (os.environ.get("MONITORING_WORKER_SECRET") or "").strip()
+    if not base or not secret:
+        raise core.SourceFileError("Falta MONITORING_BFF_URL / MONITORING_WORKER_SECRET para el scraper.")
+    req = urllib.request.Request(f"{base}{path}", method=method, data=b"" if method == "POST" else None,
+                                 headers={"x-monitoring-worker-secret": secret})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read(), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), dict(e.headers or {})
+
+
+def _scrape(name: str, budget_sec: int = 11 * 60) -> tuple[bytes, str]:
+    """Browser-based source: start a run in the fuentes-scraper container (through the BFF) and wait."""
+    status, body, _ = _bff_call("POST", f"/api/internal/source-scrape/{name}")
+    if status not in (200, 202):
+        raise core.SourceFileError(f"No se pudo iniciar el scraper {name}: {status} {body[:200]!r}")
+    deadline = time.time() + budget_sec
+    while time.time() < deadline:
+        time.sleep(15)
+        status, body, _ = _bff_call("GET", f"/api/internal/source-scrape/{name}")
+        run = (json.loads(body or b"{}") or {}).get("run") or {}
+        if run.get("status") == "failed":
+            raise core.SourceFileError(f"El scraper {name} falló: {run.get('error') or 'sin detalle'}")
+        if run.get("status") == "completed":
+            status, data, headers = _bff_call("GET", f"/api/internal/source-scrape/{name}/file", timeout=120)
+            if status != 200 or not data.strip():
+                raise core.SourceFileError(f"El scraper {name} terminó pero no se pudo leer su archivo ({status}).")
+            return data, headers.get("x-file-name") or run.get("fileName") or f"{name}.csv"
+    raise core.SourceFileError(f"El scraper {name} no terminó en {budget_sec // 60} minutos.")
+
+
+AUTO_SOURCES_SQL = """select id, client_id, name, risk_level, visibility, metadata from public.sources
+   where coalesce(metadata->>'autoUpdate','') = 'true'
+     and (coalesce(metadata->>'downloadUrl','') <> '' or coalesce(metadata->>'scraper','') <> '')"""
+
+
+def _function_name(context: Any) -> str:
+    return context.function_name if context else os.environ["AWS_LAMBDA_FUNCTION_NAME"]
+
+
+def auto_update_source(conn, src: dict[str, Any], context: Any) -> dict[str, Any]:
+    """Download (or scrape) one source and queue its strict incremental import."""
+    meta = src["metadata"] or {}
+    sid = int(src["id"])
+    url = str(meta.get("downloadUrl") or "").strip()
+    scraper = str(meta.get("scraper") or "").strip()
+    file_name = f"{scraper}.csv" if scraper else (os.path.basename(urllib.parse.urlparse(url).path) or f"fuente_{sid}.csv")
+    import_id = str(uuid.uuid4())
+    s3_key = f"clients/{int(src['client_id'])}/source-imports/{sid}/{import_id}/{file_name}"
+    try:
+        mapping = json.loads(meta.get("columnMapping") or "{}")
+    except json.JSONDecodeError:
+        mapping = {}
+    config = {
+        "auto": True,
+        "strict": True,
+        "headerRowIndex": int(meta.get("headerRowIndex") or 0),
+        "columnMapping": mapping,
+        "keyField": "",
+        "riskLevel": int(src["risk_level"]),
+        "downloadUrl": url,
+        **({"scraper": scraper} if scraper else {}),
+    }
+    try:
+        if scraper:
+            data, file_name = _scrape(scraper)
+            s3_key = f"clients/{int(src['client_id'])}/source-imports/{sid}/{import_id}/{file_name}"
+        else:
+            data = _download(url)
+        sha = hashlib.sha256(data).hexdigest()
+        if sha == meta.get("lastDownloadSha256"):
+            return {"sourceId": sid, "skipped": "sin cambios desde la última carga automática"}
+        config["downloadSha256"] = sha
+        boto3.client("s3").put_object(Bucket=_bucket(), Key=s3_key, Body=data)
+        db.create_import(
+            conn, id=import_id, source_id=sid, client_id=int(src["client_id"]), user_id=SYSTEM_USER_ID,
+            mode="incremental", s3_key=s3_key, file_name=file_name, file_size=len(data),
+            content_type="text/csv" if file_name.lower().endswith(".csv") else "application/octet-stream",
+            config=config,
+        )
+        db.set_status(conn, import_id, "queued", progress={"message": "En cola (actualización automática)"})
+        if not mapping:
+            raise core.SourceFileError("La fuente no tiene mapeo de columnas guardado: cárguela una vez a mano.")
+        boto3.client("lambda").invoke(
+            FunctionName=_function_name(context),
+            InvocationType="Event",
+            Payload=json.dumps({"importId": import_id}).encode("utf-8"),
+        )
+        return {"sourceId": sid, "importId": import_id, "bytes": len(data)}
+    except Exception as e:  # noqa: BLE001 — one source failing does not stop the others
+        origin = f"el scraper {scraper}" if scraper else url
+        msg = str(e) if isinstance(e, core.SourceFileError) else f"No se pudo descargar {origin}: {type(e).__name__}: {e}"
+        log_phase("source_import", f"auto source={sid} failed: {msg}")
+        existing = db.get_import(conn, import_id)
+        if existing is None:
+            existing = db.create_import(
+                conn, id=import_id, source_id=sid, client_id=int(src["client_id"]), user_id=SYSTEM_USER_ID,
+                mode="incremental", s3_key=s3_key, file_name=file_name, file_size=None,
+                content_type=None, config=config,
+            )
+        db.set_status(conn, import_id, "failed", error=msg[:2000], progress={"message": "Falló"})
+        notify_bff(existing, status="failed", message=msg)
+        return {"sourceId": sid, "error": msg}
+
+
 def run_auto_updates(context: Any = None) -> dict[str, Any]:
-    """Monthly: queue an automatic import for every source that has it turned on."""
+    """Monthly: direct downloads run here; each scraper source gets its own invocation (they take minutes)."""
     conn = db.connect(autocommit=True)
     out: list[dict[str, Any]] = []
     try:
-        sources = conn.execute(
-            """select id, client_id, name, risk_level, visibility, metadata from public.sources
-               where coalesce(metadata->>'autoUpdate','') = 'true' and coalesce(metadata->>'downloadUrl','') <> ''
-               order by id"""
-        ).fetchall()
-        for src in sources:
-            meta = src["metadata"] or {}
-            sid = int(src["id"])
-            url = str(meta.get("downloadUrl") or "").strip()
-            file_name = os.path.basename(urllib.parse.urlparse(url).path) or f"fuente_{sid}.csv"
-            import_id = str(uuid.uuid4())
-            s3_key = f"clients/{int(src['client_id'])}/source-imports/{sid}/{import_id}/{file_name}"
-            try:
-                mapping = json.loads(meta.get("columnMapping") or "{}")
-            except json.JSONDecodeError:
-                mapping = {}
-            config = {
-                "auto": True,
-                "strict": True,
-                "headerRowIndex": int(meta.get("headerRowIndex") or 0),
-                "columnMapping": mapping,
-                "keyField": "",
-                "riskLevel": int(src["risk_level"]),
-                "downloadUrl": url,
-            }
-            try:
-                data = _download(url)
-                sha = hashlib.sha256(data).hexdigest()
-                if sha == meta.get("lastDownloadSha256"):
-                    out.append({"sourceId": sid, "skipped": "sin cambios desde la última carga automática"})
-                    continue
-                config["downloadSha256"] = sha
-                boto3.client("s3").put_object(Bucket=_bucket(), Key=s3_key, Body=data)
-                row = db.create_import(
-                    conn, id=import_id, source_id=sid, client_id=int(src["client_id"]), user_id=SYSTEM_USER_ID,
-                    mode="incremental", s3_key=s3_key, file_name=file_name, file_size=len(data),
-                    content_type="text/csv" if file_name.lower().endswith(".csv") else "application/octet-stream",
-                    config=config,
-                )
-                db.set_status(conn, import_id, "queued", progress={"message": "En cola (actualización automática)"})
-                if not mapping:
-                    raise core.SourceFileError("La fuente no tiene mapeo de columnas guardado: cárguela una vez a mano.")
+        for src in conn.execute(AUTO_SOURCES_SQL + " order by id").fetchall():
+            if str((src["metadata"] or {}).get("scraper") or "").strip():
                 boto3.client("lambda").invoke(
-                    FunctionName=(context.function_name if context else os.environ["AWS_LAMBDA_FUNCTION_NAME"]),
+                    FunctionName=_function_name(context),
                     InvocationType="Event",
-                    Payload=json.dumps({"importId": import_id}).encode("utf-8"),
+                    Payload=json.dumps({"autoUpdateSource": int(src["id"])}).encode("utf-8"),
                 )
-                out.append({"sourceId": sid, "importId": import_id, "bytes": len(data)})
-            except Exception as e:  # noqa: BLE001 — one source failing does not stop the others
-                msg = str(e) if isinstance(e, core.SourceFileError) else f"No se pudo descargar {url}: {type(e).__name__}: {e}"
-                log_phase("source_import", f"auto source={sid} failed: {msg}")
-                existing = db.get_import(conn, import_id)
-                if existing is None:
-                    existing = db.create_import(
-                        conn, id=import_id, source_id=sid, client_id=int(src["client_id"]), user_id=SYSTEM_USER_ID,
-                        mode="incremental", s3_key=s3_key, file_name=file_name, file_size=None,
-                        content_type=None, config=config,
-                    )
-                db.set_status(conn, import_id, "failed", error=msg[:2000], progress={"message": "Falló"})
-                notify_bff(existing, status="failed", message=msg)
-                out.append({"sourceId": sid, "error": msg})
+                out.append({"sourceId": int(src["id"]), "scraper": "invocación propia"})
+            else:
+                out.append(auto_update_source(conn, src, context))
     finally:
         conn.close()
     log_phase("source_import", f"auto-update run: {out}")
     return {"ok": True, "sources": out}
 
 
+def run_auto_update_one(source_id: int, context: Any = None) -> dict[str, Any]:
+    conn = db.connect(autocommit=True)
+    try:
+        src = conn.execute(AUTO_SOURCES_SQL + " and id = %s", (source_id,)).fetchone()
+        if src is None:
+            return {"ok": False, "error": f"fuente {source_id} sin actualización automática"}
+        return {"ok": True, **auto_update_source(conn, src, context)}
+    finally:
+        conn.close()
+
+
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     event = event or {}
     if event.get("autoUpdate"):
         return run_auto_updates(context)
+    if event.get("autoUpdateSource"):
+        return run_auto_update_one(int(event["autoUpdateSource"]), context)
     import_id = str(event.get("importId") or "").strip()
     if not import_id:
         return {"ok": False, "error": "importId requerido"}
