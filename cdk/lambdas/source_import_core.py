@@ -183,7 +183,7 @@ def table_from_matrix(matrix: list[list[str]], header_row_index: int) -> tuple[l
 
 # --- text repair (same rules as lib/source-file-validation.ts) -------------------------------------
 
-_MAC_MISREAD = {"—": "Ñ", "”": "Ó", "Û": "ó", "¡": "Á", "Ò": "ñ", "Ì": "í", "Õ": "Í", "…": "É", "„": "Ñ", "†": " "}
+_MAC_MISREAD = {"—": "Ñ", "”": "Ó", "Û": "ó", "¡": "Á", "Ò": "ñ", "Ì": "í", "Õ": "Í", "…": "É", "‹": "Ü", "⁄": "Ú", "„": "Ñ", "†": " "}
 _MAC_MARKS = "".join(_MAC_MISREAD)
 _LETTER = "A-Za-zÁÉÍÓÚáéíóúÑñ"
 _MAC_BETWEEN_LETTERS = re.compile(f"[{_LETTER}][{re.escape(_MAC_MARKS)}][{_LETTER}]")

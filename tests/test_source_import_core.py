@@ -129,3 +129,8 @@ def test_strict_import_spots_new_columns_against_the_saved_mapping():
     # Repaired / differently cased headers are the same column; "NUEVA" is not in the mapping.
     assert w._extra_columns(["rfc", "NOMBRE", "PublicaciÛn DOF", "NUEVA"], mapping) == ["NUEVA"]
     assert w._extra_columns(["RFC", "Nombre", "Publicación DOF"], mapping) == []
+
+
+def test_repairs_u_umlaut_and_u_acute_misread_as_mac_roman():
+    assert core.repair_text("T‹V S‹D", "mac") == "TÜV SÜD"
+    assert core.repair_text("JES⁄S", "mac") == "JESÚS"
