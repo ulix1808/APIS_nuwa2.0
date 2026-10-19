@@ -16,6 +16,7 @@ blocked automatic import is reported to the BFF, which mails every super admin; 
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import os
@@ -50,6 +51,16 @@ def _extra_columns(headers: list[str], mapping: dict[str, str]) -> list[str]:
         if core.header_match_key(h) not in known and core.header_match_key(fixed) not in known:
             out.append(h)
     return out
+
+
+def _mexico_today() -> str:
+    """YYYY-MM-DD in Mexico City (the admin shows dates there)."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        return dt.datetime.now(ZoneInfo("America/Mexico_City")).date().isoformat()
+    except Exception:  # noqa: BLE001 — no tz database: Mexico City has no DST since 2022
+        return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=6)).date().isoformat()
 
 
 def notify_bff(imp: dict[str, Any], *, status: str, message: str) -> None:
@@ -147,6 +158,11 @@ def run_import(import_id: str) -> dict[str, Any]:
                 meta_updates["Source Date"] = str(cfg["sourceDate"])
             if cfg.get("downloadSha256"):
                 meta_updates["lastDownloadSha256"] = str(cfg["downloadSha256"])
+            # A completed upload is also a review of the source (Editar fuente → Fecha de revisión).
+            today = _mexico_today()
+            meta_updates["reviewedAt"] = today
+            if cfg.get("auto") and not cfg.get("sourceDate"):
+                meta_updates["Source Date"] = today[:7]  # the month the source was downloaded
             counts = db.apply_records(
                 conn,
                 source=source,
