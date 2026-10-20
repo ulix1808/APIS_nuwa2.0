@@ -384,11 +384,23 @@ def alert_title(entity_name: str, items: list[dict[str, Any]]) -> str:
     return f"{len(items)} coincidencias nuevas de {entity_name} en {', '.join(lists)}"[:300]
 
 
+_MONTHS_ES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def format_date_es(ymd: str | None) -> str:
+    """'2026-07-23' → '23 jul 2026' (same as formatListDate in the BFF)."""
+    try:
+        y, m, d = (int(x) for x in str(ymd or "")[:10].split("-"))
+        return f"{d} {_MONTHS_ES[m - 1]} {y}"
+    except (ValueError, IndexError):
+        return ""
+
+
 def alert_description(items: list[dict[str, Any]]) -> str:
     lines = []
     for i in items:
         subject = f"{i['subjectRoleLabel']} {i['subjectName']}" if i.get("subjectRole") else i["subjectName"]
-        when = f", designada el {i['designatedOn']}" if i.get("designatedOn") else ""
+        when = f", designada el {format_date_es(i['designatedOn'])}" if i.get("designatedOn") else ""
         review = " Se propone revisar." if i["severity"] == "medium" else ""
         lines.append(f"{subject} → {list_label(i)}: {i['recordName']} (por {i['matchedByLabel']}{when}).{review}")
     return "\n".join(lines)[:4000]

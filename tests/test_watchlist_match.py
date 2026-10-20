@@ -154,6 +154,9 @@ def test_first_run_alerts_once_per_entity_and_skips_what_the_report_shows(conn, 
     assert green["title"] == "Green Agropacific aparece en OFAC SDN: Green Agropacific S.P.R. de R.L. de C.V."
     m = green["payload"]["matches"][0]
     assert (m["recordRef"], m["matchedBy"], m["designatedOn"]) == ("58020", "name", "2026-07-23")
+    assert green["description"] == (
+        "Green Agropacific → OFAC SDN: Green Agropacific S.P.R. de R.L. de C.V. (por nombre, designada el 23 jul 2026)."
+    )
 
     holding = alerts["Holding Pacifico Norte"]
     assert holding["title"].startswith("Accionista de Holding Pacifico Norte (Green Agropacific SPR de RL de CV) aparece en OFAC SDN")
