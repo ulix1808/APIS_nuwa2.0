@@ -495,9 +495,18 @@ def persist(conn: psycopg.Connection, run_id: int, matches: list[NewMatch], know
 
 
 def last_match_since(conn: psycopg.Connection) -> dt.datetime | None:
-    """Start of the last successful match run: the next one looks at what changed after it started."""
+    """Start of the last successful match run over every client: the next one looks at what changed after it started.
+
+    Runs limited to some clients (the dev stack, a manual {"clientIds": [...]}) do not count: the other clients were
+    not matched then. With no such run, None: the first unfiltered run matches everything against the full lists.
+    """
     row = conn.execute(
-        "SELECT started_at FROM public.watchlist_runs WHERE kind = 'match' AND status = 'ok' ORDER BY id DESC LIMIT 1"
+        """
+        SELECT started_at FROM public.watchlist_runs
+         WHERE kind = 'match' AND status = 'ok'
+           AND coalesce(jsonb_typeof(counts -> 'clientFilter'), 'null') = 'null'
+         ORDER BY id DESC LIMIT 1
+        """
     ).fetchone()
     return row["started_at"] if row else None
 

@@ -235,6 +235,18 @@ def test_client_filter_of_the_dev_stack(conn, monkeypatch):
     assert out["counts"]["clientFilter"] == [9]
 
 
+def test_a_client_filtered_run_does_not_move_the_cursor_of_the_others(conn, monkeypatch):
+    _setup_jalisco(conn)
+    monkeypatch.setenv("WATCHLIST_CLIENT_IDS", "9")
+    _run(conn, monkeypatch)
+    assert wm.last_match_since(conn) is None
+    # The first run over every client still matches client 8 against the whole list.
+    monkeypatch.delenv("WATCHLIST_CLIENT_IDS")
+    out, _ = _run(conn, monkeypatch)
+    assert 8 in {a["clientId"] for a in out["alerts"]}
+    assert wm.last_match_since(conn) is not None
+
+
 def test_inactive_and_deleted_entities_are_not_matched(conn, monkeypatch):
     _sync(conn, _ofac_records())
     gone = _entity(conn, 8, "Green Agropacific", "organization")
