@@ -104,6 +104,10 @@ if watchlist_environment:
             or ("https://app.nuwa.space/v2" if watchlist_environment == "prod" else "https://dev.nuwa.space/v2")
         ),
         schedules_enabled=_truthy_ctx("watchlistSchedules"),
+        # dev writes to the prod database: alerts only for the QA client unless told otherwise.
+        client_ids=str(
+            app.node.try_get_context("watchlistClientIds") or ("" if watchlist_environment == "prod" else "8")
+        ),
         env=cdk.Environment(
             account=_cdk_account,
             region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),

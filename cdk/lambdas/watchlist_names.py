@@ -228,6 +228,7 @@ MIN_COVERAGE = 0.5
 
 def match_tokens(query: list[str], candidate: list[str], *, min_coverage: float = MIN_COVERAGE) -> str | None:
     """
+    People's names (companies use match_company_tokens).
     'exact': every query token is in the candidate (each once, any order).
     'fuzzy': the same with one token one letter off (tokens of 5+ letters).
     None otherwise. Compact forms also count as exact ('Mefra Fletes' = 'Mefrafletes').
@@ -257,6 +258,47 @@ def match_tokens(query: list[str], candidate: list[str], *, min_coverage: float 
     for other in pool:
         if len(other) >= FUZZY_MIN_TOKEN_LEN - 1 and _one_edit(token, other):
             return "fuzzy"
+    return None
+
+
+def _one_token_off(a: list[str], b: list[str]) -> bool:
+    """Same words (any order) except one pair one letter apart, both of 5+ letters."""
+    if len(a) != len(b):
+        return False
+    pool = list(b)
+    missing = []
+    for t in a:
+        if t in pool:
+            pool.remove(t)
+        else:
+            missing.append(t)
+    if len(missing) != 1 or len(pool) != 1:
+        return False
+    x, y = missing[0], pool[0]
+    return min(len(x), len(y)) >= FUZZY_MIN_TOKEN_LEN - 1 and max(len(x), len(y)) >= FUZZY_MIN_TOKEN_LEN and _one_edit(x, y)
+
+
+def match_company_tokens(query: list[str], candidate: list[str]) -> str | None:
+    """
+    Companies (tokens without legal forms or connectors):
+    'exact'   the same words in any order, or the same compact name ("Mefra Fletes" = "MEFRAFLETES SA DE CV");
+    'partial' the registered name is how the list name starts, 2+ words, covering half of it
+              ("Agropecuaria Amateq" → "AGROPECUARIA AMATEQ DEL VALLE"): se propone revisar;
+    'fuzzy'   the same words with one of them one letter off, 2+ words ("Green Agropasific").
+    Words in another order or in the middle of a longer name do not match ("Business Group" ≠ "ANG Business
+    Group", "General de Comercio" ≠ "Comercio General Glunta"); one-word names only match exactly ("Coppel" ≠
+    "Copper").
+    """
+    if not query or not candidate:
+        return None
+    if sorted(query) == sorted(candidate) or "".join(query) == "".join(candidate):
+        return "exact"
+    if len(query) < 2:
+        return None
+    if len(query) < len(candidate) and candidate[: len(query)] == query and len(query) >= len(candidate) * MIN_COVERAGE:
+        return "partial"
+    if _one_token_off(query, candidate):
+        return "fuzzy"
     return None
 
 

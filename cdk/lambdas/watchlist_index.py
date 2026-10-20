@@ -7,8 +7,8 @@ Decision for one subject (entity, partner or representative) against one list re
    different taxpayer or person (homonym): no match.
 3. People (PF): only an ID proves it. The name alone never alerts. An RFC whose first 10 characters are the
    CURP's on the list, plus the full name, is a probable match (medium).
-4. Companies (PM): every word of the registered name (without legal forms) in the list name or one of its
-   aliases → high; one letter off → medium ("se propone revisar").
+4. Companies (PM), name without legal forms against the list name and its aliases: the same words → high;
+   the registered name is how the list name starts, or one letter off → medium ("se propone revisar").
 OFAC weak aliases (lowQuality) are not used to match.
 """
 
@@ -22,6 +22,7 @@ from watchlist_names import (
     company_identity_key,
     compare_ids,
     is_searchable,
+    match_company_tokens,
     match_tokens,
     name_tokens,
     rfc_base,
@@ -71,18 +72,22 @@ def _types_compatible(subject_type: str, record_type: str) -> bool:
     return subject_type == record_type
 
 
+_LEVEL_RANK = {"exact": 0, "partial": 1, "fuzzy": 2}
+
+
 def _best_name_level(subject: Subject, record: ListRecord, party_type: str) -> tuple[str | None, str]:
+    compare = match_company_tokens if party_type == "organization" else match_tokens
     best: tuple[str | None, str] = (None, "")
     for subject_name in [subject.name, *subject.aliases]:
         query = name_tokens(subject_name, party_type)
         if not is_searchable(query, party_type):
             continue
         for candidate in record.names:
-            level = match_tokens(query, name_tokens(candidate, party_type))
+            level = compare(query, name_tokens(candidate, party_type))
             if level == "exact":
                 return "exact", candidate
-            if level == "fuzzy" and best[0] is None:
-                best = ("fuzzy", candidate)
+            if level and (best[0] is None or _LEVEL_RANK[level] < _LEVEL_RANK[best[0]]):
+                best = (level, candidate)
     return best
 
 
@@ -104,6 +109,8 @@ def evaluate(subject: Subject, record: ListRecord) -> Match | None:
         return None
     if level == "exact":
         return Match(record, "name", "high", matched_name, level)
+    if level == "partial":
+        return Match(record, "name_partial", "medium", matched_name, level)
     if level == "fuzzy":
         return Match(record, "name_fuzzy", "medium", matched_name, level)
     return None

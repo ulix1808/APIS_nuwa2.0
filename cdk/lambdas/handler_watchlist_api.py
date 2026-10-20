@@ -7,6 +7,7 @@ POST /v1/watchlist/entries/get   {extId, listCode?: 'ofac'} → one record with 
 POST /v1/watchlist/changes       {runId? | since?, change?, limit?} → delta of the syncs (super admin)
 POST /v1/watchlist/runs          {kind?: sync|match, limit?} → last runs (super admin)
 POST /v1/watchlist/sync          {force?} → starts a sync now, asynchronous (super admin)
+POST /v1/watchlist/match         {full?, clientIds?, notify?} → starts a match now, asynchronous (super admin)
 """
 
 from __future__ import annotations
@@ -164,15 +165,26 @@ def handle_changes(conn, body: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def handle_sync(body: dict[str, Any]) -> dict[str, Any]:
-    fn = os.environ.get("WATCHLIST_SYNC_FUNCTION") or ""
+def _invoke_async(env_name: str, payload: dict[str, Any], message: str) -> dict[str, Any]:
+    fn = os.environ.get(env_name) or ""
     if not fn:
-        return _resp(503, {"code": "NOT_CONFIGURED", "message": "WATCHLIST_SYNC_FUNCTION no configurado."})
+        return _resp(503, {"code": "NOT_CONFIGURED", "message": f"{env_name} no configurado."})
     import boto3
 
-    payload = {"force": bool(body.get("force")), "trigger": "manual"}
     boto3.client("lambda").invoke(FunctionName=fn, InvocationType="Event", Payload=json.dumps(payload).encode())
-    return _resp(202, {"success": True, "message": "Sincronización iniciada."})
+    return _resp(202, {"success": True, "message": message})
+
+
+def handle_sync(body: dict[str, Any]) -> dict[str, Any]:
+    payload = {"force": bool(body.get("force")), "trigger": "manual"}
+    return _invoke_async("WATCHLIST_SYNC_FUNCTION", payload, "Sincronización iniciada.")
+
+
+def handle_match(body: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {"trigger": "manual", "full": bool(body.get("full")), "notify": body.get("notify", True) is not False}
+    if isinstance(body.get("clientIds"), list):
+        payload["clientIds"] = [int(c) for c in body["clientIds"] if str(c).isdigit()]
+    return _invoke_async("WATCHLIST_MATCH_FUNCTION", payload, "Cruce iniciado.")
 
 
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -200,6 +212,8 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     try:
         if path.endswith("/watchlist/sync"):
             return handle_sync(body)
+        if path.endswith("/watchlist/match"):
+            return handle_match(body)
         conn = db.connect(autocommit=True)
         try:
             if path.endswith("/watchlist/search"):

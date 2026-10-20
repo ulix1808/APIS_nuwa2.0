@@ -95,3 +95,23 @@ def test_generic_words_do_not_match_inside_a_long_name():
     long_name = wn.company_tokens("Resguardo De Valores Y Servicios Integrales RSVI, S.A. DE C.V.")
     assert wn.match_tokens(wn.company_tokens("Servicios Integrales"), long_name) is None
     assert wn.match_tokens(wn.company_tokens("Resguardo de Valores Servicios Integrales"), long_name) == "exact"
+
+
+def test_company_rule_from_the_prod_dry_run():
+    c = wn.company_tokens
+    m = wn.match_company_tokens
+    assert m(c("Green Agropacific"), c("GREEN AGROPACIFIC S.P.R. DE R.L. DE C.V.")) == "exact"
+    assert m(c("Productores Vagu"), c("PRODUCTORES VAGU S.A. DE C.V.")) == "exact"
+    assert m(c("Agropecuaria Amateq"), c("AGROPECUARIA AMATEQ DEL VALLE S.A. DE C.V.")) == "partial"
+    assert m(c("Green Agropasific"), c("Green Agropacific SPR de RL")) == "fuzzy"
+    # Noise seen against the real lists:
+    assert m(c("Coppel"), c("UDOKAN COPPER LLC")) is None
+    assert m(c("Coppel"), c("COPSEL SA DE CV")) is None
+    assert m(c("Gamesa"), c("OLSEN GAMES SA DE CV")) is None
+    assert m(c("BUSINESS GROUP"), c("ANG BUSINESS GROUP, S.C.")) is None
+    assert m(c("GENERAL DE COMERCIO S.A."), c("COMERCIO GENERAL GLUNTA SA DE CV")) is None
+    assert m(c("La Casa Blanca"), c("COMERCIALIZADORA Y CONSTRUCCIONES CASA BLANCA SA DE CV")) is None
+    assert m(c("Servicios Integrales"), c("Resguardo De Valores Y Servicios Integrales RSVI, S.A. DE C.V.")) is None
+    # A one-word company only matches exactly.
+    assert m(c("Exfarma"), c("EXFARMA SA DE CV")) == "exact"
+    assert m(c("Mefra Fletes"), c("MEFRAFLETES SA DE CV")) == "exact"
