@@ -5,7 +5,7 @@ Lambda watchlist-sync: daily refresh of our OFAC copy (EventBridge, 22:00 CDMX).
 2. If both files are byte-identical to the last good sync (sha256), records an 'unchanged' run and stops:
    OFAC does not publish every day.
 3. Parses both files, merges them by FixedRef and applies the delta in one transaction (watchlist_db).
-4. A failure is recorded in watchlist_runs and mailed to the super admins through the BFF; the last good
+4. A failure is recorded in watchlist_runs and mailed to the super admins (SES); the last good
    version of the list stays in place.
 
 Event: {"force": true} reapplies even if the files did not change; {"trigger": "manual"} labels the run.
@@ -14,13 +14,13 @@ Event: {"force": true} reapplies even if the files did not change; {"trigger": "
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import time
 import urllib.request
 from typing import Any
 
 import watchlist_db as db
+import watchlist_mail as mail
 import watchlist_ofac as ofac
 from nuwa_obs_log import log_phase
 
@@ -47,28 +47,6 @@ def _download(name: str) -> dict[str, Any]:
     if size < 1024:
         raise RuntimeError(f"{name}: descarga vacía o incompleta ({size} bytes)")
     return {"path": path, "sha256": digest.hexdigest(), "bytes": size, "lastModified": last_modified}
-
-
-def _notify_failure(message: str, recipients: list[str]) -> None:
-    base = (os.environ.get("MONITORING_BFF_URL") or "").rstrip("/")
-    secret = os.environ.get("MONITORING_WORKER_SECRET") or ""
-    if not base or not secret:
-        log_phase("watchlist_sync", "notify skipped: no BFF url/secret")
-        return
-    body = json.dumps(
-        {"event": "sync_failed", "listCode": LIST_CODE, "message": message[:1500], "recipients": recipients}
-    ).encode("utf-8")
-    req = urllib.request.Request(
-        f"{base}/api/internal/watchlist-alert",
-        data=body,
-        method="POST",
-        headers={"Content-Type": "application/json", "x-monitoring-worker-secret": secret},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            log_phase("watchlist_sync", f"notify -> {r.status}")
-    except Exception as e:  # noqa: BLE001
-        log_phase("watchlist_sync", f"notify failed: {e}")
 
 
 def run_sync(*, force: bool = False, trigger: str = "schedule") -> dict[str, Any]:
@@ -114,7 +92,7 @@ def run_sync(*, force: bool = False, trigger: str = "schedule") -> dict[str, Any
             recipients = db.super_admin_emails(conn)
         except Exception as e2:  # noqa: BLE001 — the run row and the mail must not fail on each other
             log_phase("watchlist_sync", f"run {run_id} failure bookkeeping: {e2}")
-        _notify_failure(message, recipients)
+        mail.mail_failure("sync_failed", message, recipients)
         return {"ok": False, "runId": run_id, "status": "failed", "error": message}
     finally:
         for name in ofac.OFAC_FILES:

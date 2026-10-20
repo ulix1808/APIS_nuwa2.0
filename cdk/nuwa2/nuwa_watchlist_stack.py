@@ -35,6 +35,8 @@ from nuwa2.nuwa_naming import (
     nuwa_name_prefix,
 )
 
+WATCHLIST_MAIL_FROM = "alertas@nuwa.space"
+
 
 class NuwaWatchlistStack(Stack):
     def __init__(
@@ -70,7 +72,12 @@ class NuwaWatchlistStack(Stack):
             "NUWA_DATABASE_SECRET_ARN": db_secret.secret_arn,
             "NUWA_APP_CRYPTO_SECRET_ARN": app_crypto_secret.secret_arn,
             "NUWA_APP_CRYPTO_SECRET_NAME": app_crypto_name,
+            # The BFF only pushes the bell; the Lambdas mail through SES with links to the app.
             "MONITORING_BFF_URL": bff_url.rstrip("/"),
+            "WATCHLIST_APP_URL": bff_url.rstrip("/"),
+            "WATCHLIST_MAIL_FROM": WATCHLIST_MAIL_FROM,
+            "WATCHLIST_MAIL_REPLY_TO": "soporte@nuwa.space",
+            "WATCHLIST_MAIL_REGION": "us-east-1",
             # from_secret_name_v2 + secret_value uses an ARN without the random suffix;
             # CloudFormation then fails with ResourceNotFoundException. Resolve by secret name.
             "MONITORING_WORKER_SECRET": SecretValue.secrets_manager(monitoring_secret_name).unsafe_unwrap(),
@@ -136,6 +143,15 @@ class NuwaWatchlistStack(Stack):
         )
         for fn in (sync_fn, match_fn, api_fn):
             fn.add_to_role_policy(secret_access)
+
+        # Early-warning and failure mails, only from the alerts sender (same SES identity the BFF uses).
+        ses_send = iam.PolicyStatement(
+            actions=["ses:SendEmail", "ses:SendRawEmail"],
+            resources=[self.format_arn(service="ses", resource="identity", resource_name="*")],
+            conditions={"StringEquals": {"ses:FromAddress": WATCHLIST_MAIL_FROM}},
+        )
+        for fn in (sync_fn, match_fn):
+            fn.add_to_role_policy(ses_send)
 
         api = apigw.RestApi(
             self,

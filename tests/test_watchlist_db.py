@@ -144,7 +144,7 @@ def test_handler_applies_then_skips_an_unchanged_publication(conn, monkeypatch, 
     monkeypatch.setattr(sync, "_download", _fake_download(tmp_path))
     monkeypatch.setattr(sync.db, "connect", lambda **_: psycopg.connect(CONNINFO, row_factory=dict_row, autocommit=True))
     notified: list[str] = []
-    monkeypatch.setattr(sync, "_notify_failure", lambda message, recipients: notified.append(message))
+    monkeypatch.setattr(sync.mail, "mail_failure", lambda event, message, recipients: notified.append(message))
 
     first = sync.handler({}, None)
     assert first["status"] == "ok" and first["counts"]["added"] == 10 and first["publishedOn"] == "2026-10-19"  # newest of SDN (15 Oct) and Consolidated (19 Oct)
@@ -165,7 +165,7 @@ def test_handler_records_and_reports_a_failure(conn, monkeypatch, tmp_path):
     monkeypatch.setattr(sync, "_download", broken)
     monkeypatch.setattr(sync.db, "connect", lambda **_: psycopg.connect(CONNINFO, row_factory=dict_row, autocommit=True))
     notified: list[str] = []
-    monkeypatch.setattr(sync, "_notify_failure", lambda message, recipients: notified.append(message))
+    monkeypatch.setattr(sync.mail, "mail_failure", lambda event, message, recipients: notified.append(message))
     out = sync.handler({}, None)
     assert out["status"] == "failed" and "503" in out["error"]
     assert db.list_runs(conn)[0]["status"] == "failed"

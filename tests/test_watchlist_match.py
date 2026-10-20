@@ -108,10 +108,19 @@ def _sat(conn):
 
 def _run(conn, monkeypatch, **event):
     monkeypatch.setattr(hm.db, "connect", lambda **_: psycopg.connect(CONNINFO, row_factory=dict_row, autocommit=True))
-    sent: list[dict] = []
-    monkeypatch.setattr(hm, "_post_bff", lambda payload: sent.append(payload) or 200)
+    sent: list[dict] = []  # one mail per client (SES)
+    monkeypatch.setattr(
+        hm.mail,
+        "mail_matches",
+        lambda recipients, alerts: sent.append({"clientId": alerts[0]["clientId"], "recipients": recipients, "alerts": alerts})
+        or True,
+    )
+    bells: list[dict] = []  # the BFF only pushes the bell
+    monkeypatch.setattr(hm, "_post_bff", lambda payload: bells.append(payload) or 200)
     out = hm.handler({"trigger": "manual", **event}, None)
     assert out["ok"], out
+    assert sorted(p["clientId"] for p in bells) == sorted(p["clientId"] for p in sent)
+    assert all(p["event"] == "matches" and p["mailed"] and "recipients" not in p for p in bells)
     return out, sent
 
 
@@ -178,13 +187,13 @@ def test_first_run_alerts_once_per_entity_and_skips_what_the_report_shows(conn, 
     in_report = conn.execute("select status from watchlist_matches where entity_id = %s", (ids["imperial"],)).fetchone()
     assert in_report["status"] == "in_report"
     assert stats["alerts"] == 4 and stats["inReport"] == 1
-    # One mail per client, to its active users, with everything the BFF needs (it reads no table).
+    # One mail per client, to its active users; the BFF gets the same alerts for the bell.
     by_client = {p["clientId"]: p for p in sent}
     assert sorted(by_client) == [8, 9]
     assert by_client[8]["recipients"] == ["qa@nuwa.space"] and by_client[9]["recipients"] == ["ana@otro.mx"]
     mail_alert = next(a for a in by_client[8]["alerts"] if a["entityName"] == "Green Agropacific")
     assert mail_alert["partyType"] == "organization" and mail_alert["matches"][0]["recordName"].startswith("Green Agropacific")
-    assert stats["mails"] == {"8": 200, "9": 200}
+    assert stats["mails"] == {"8": 1, "9": 1} and stats["bells"] == {"8": 200, "9": 200}
 
 
 def test_second_run_repeats_nothing_and_new_things_are_matched(conn, monkeypatch):

@@ -1,9 +1,9 @@
 """
 Lambda watchlist-match: daily early-warning match (EventBridge, 06:00 CDMX = 12:00 UTC).
 
-Runs watchlist_match.run_match, records the run, and asks the BFF to mail each client once with all its
-new alerts (the alerts are already in entity_alerts: bell and Alertas show them without the mail). The
-payload carries the recipients (active users of the client) and the alert details: the BFF reads nothing.
+Runs watchlist_match.run_match, records the run, mails each client once (SES, to all its active users) with
+all its new alerts, and posts the alerts to the BFF only for the bell (the bell lives in the BFF's Redis).
+The alerts are already in entity_alerts, so Alertas shows them even if the BFF is down.
 
 Env WATCHLIST_CLIENT_IDS="8,12" limits the run to those clients (the dev stack: the QA client only).
 Event: {"full": true} rematches everything; {"clientIds": [8]}; {"notify": false} skips the mails;
@@ -19,6 +19,7 @@ import urllib.request
 from typing import Any
 
 import watchlist_db as db
+import watchlist_mail as mail
 import watchlist_match as wm
 from nuwa_obs_log import log_phase
 
@@ -62,24 +63,21 @@ def run(event: dict[str, Any]) -> dict[str, Any]:
         stats = out["stats"]
         stats["clientFilter"] = client_ids
         mails: dict[str, Any] = {}
+        bells: dict[str, Any] = {}
         if event.get("notify", True):
             for client_id, alerts in wm.group_by_client(out["alerts"]).items():
-                # Recipients and alert details go in the payload: the BFF only formats and sends the mail.
                 recipients = db.client_user_emails(conn, client_id)
-                mails[str(client_id)] = (
-                    _post_bff(
-                        {
-                            "event": "matches",
-                            "clientId": client_id,
-                            "runId": run_id,
-                            "recipients": recipients,
-                            "alerts": alerts,
-                        }
-                    )
-                    if recipients
-                    else "no_recipients"
+                if not recipients:
+                    mails[str(client_id)] = "no_recipients"
+                else:
+                    sent = mail.mail_matches(recipients, alerts)
+                    mails[str(client_id)] = len(recipients) if sent else "failed"
+                # The BFF only pushes the bell; the mail is already sent ("mailed").
+                bells[str(client_id)] = _post_bff(
+                    {"event": "matches", "clientId": client_id, "runId": run_id, "mailed": True, "alerts": alerts}
                 )
         stats["mails"] = mails
+        stats["bells"] = bells
         stats["seconds"] = round(time.time() - started, 1)
         db.finish_run(conn, run_id, "ok", counts=stats)
         log_phase("watchlist_match", f"run {run_id} ok {stats}")
@@ -93,7 +91,7 @@ def run(event: dict[str, Any]) -> dict[str, Any]:
             recipients = db.super_admin_emails(conn)
         except Exception as e2:  # noqa: BLE001
             log_phase("watchlist_match", f"run {run_id} failure bookkeeping: {e2}")
-        _post_bff({"event": "match_failed", "runId": run_id, "message": message[:1500], "recipients": recipients})
+        mail.mail_failure("match_failed", message, recipients)
         return {"ok": False, "runId": run_id, "status": "failed", "error": message}
     finally:
         conn.close()
