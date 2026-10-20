@@ -1,0 +1,871 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Sanctions xmlns="https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/ADVANCED_XML" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Version="3" xsi:schemaLocation="https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/ADVANCED_XML https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/ADVANCED_XML.xsd">
+  <DateOfIssue CalendarTypeID="1">
+    <Year>2026</Year>
+    <Month>10</Month>
+    <Day>19</Day>
+  </DateOfIssue>
+  <ReferenceValueSets>
+    <AliasTypeValues>
+      <AliasType ID="1400">A.K.A.</AliasType>
+      <AliasType ID="1401">F.K.A.</AliasType>
+      <AliasType ID="1403">Name</AliasType>
+    </AliasTypeValues>
+    <AreaCodeValues>
+      <AreaCode ID="11033" CountryID="11033" Description="Angola" AreaCodeTypeID="1">AO</AreaCode>
+      <AreaCode ID="11036" CountryID="11036" Description="Armenia" AreaCodeTypeID="1">AM</AreaCode>
+      <AreaCode ID="11038" CountryID="11038" Description="Austria" AreaCodeTypeID="1">AT</AreaCode>
+      <AreaCode ID="11039" CountryID="11039" Description="Azerbaijan" AreaCodeTypeID="1">AZ</AreaCode>
+      <AreaCode ID="11044" CountryID="11044" Description="Belarus" AreaCodeTypeID="1">BY</AreaCode>
+      <AreaCode ID="11056" CountryID="11056" Description="Burma" AreaCodeTypeID="1">MM</AreaCode>
+      <AreaCode ID="11065" CountryID="11065" Description="China" AreaCodeTypeID="1">CN</AreaCode>
+      <AreaCode ID="11074" CountryID="11074" Description="Cyprus" AreaCodeTypeID="1">CY</AreaCode>
+      <AreaCode ID="11079" CountryID="11079" Description="Dominican Republic" AreaCodeTypeID="1">DO</AreaCode>
+      <AreaCode ID="11093" CountryID="11093" Description="Georgia" AreaCodeTypeID="1">GE</AreaCode>
+      <AreaCode ID="11102" CountryID="11102" Description="Haiti" AreaCodeTypeID="1">HT</AreaCode>
+      <AreaCode ID="11107" CountryID="11107" Description="India" AreaCodeTypeID="1">IN</AreaCode>
+      <AreaCode ID="11109" CountryID="11109" Description="Iran" AreaCodeTypeID="1">IR</AreaCode>
+      <AreaCode ID="11117" CountryID="11117" Description="Kazakhstan" AreaCodeTypeID="1">KZ</AreaCode>
+      <AreaCode ID="11132" CountryID="11132" Description="Luxembourg" AreaCodeTypeID="1">LU</AreaCode>
+      <AreaCode ID="11147" CountryID="11147" Description="Mongolia" AreaCodeTypeID="1">MN</AreaCode>
+      <AreaCode ID="11153" CountryID="11153" Description="Netherlands" AreaCodeTypeID="1">NL</AreaCode>
+      <AreaCode ID="11171" CountryID="11171" Description="Russia" AreaCodeTypeID="1">RU</AreaCode>
+      <AreaCode ID="11181" CountryID="11181" Description="Serbia" AreaCodeTypeID="1">RS</AreaCode>
+      <AreaCode ID="11196" CountryID="11196" Description="Switzerland" AreaCodeTypeID="1">CH</AreaCode>
+      <AreaCode ID="11205" CountryID="11205" Description="Turkey" AreaCodeTypeID="1">TR</AreaCode>
+      <AreaCode ID="11209" CountryID="11209" Description="Ukraine" AreaCodeTypeID="1">UA</AreaCode>
+      <AreaCode ID="11212" CountryID="11212" Description="United States" AreaCodeTypeID="1">US</AreaCode>
+      <AreaCode ID="11230" CountryID="11230" Description="Cayman Islands" AreaCodeTypeID="1">KY</AreaCode>
+      <AreaCode ID="11245" CountryID="11245" Description="Guernsey" AreaCodeTypeID="1">GG</AreaCode>
+      <AreaCode ID="11247" CountryID="11247" Description="Hong Kong" AreaCodeTypeID="1">HK</AreaCode>
+      <AreaCode ID="11278" CountryID="11278" Description="Virgin Islands, British" AreaCodeTypeID="1">VG</AreaCode>
+      <AreaCode ID="11291" CountryID="11291" Description="undetermined" AreaCodeTypeID="1" />
+      <AreaCode ID="91021" CountryID="91021" Description="Palestinian" AreaCodeTypeID="1">PS</AreaCode>
+    </AreaCodeValues>
+    <AreaCodeTypeValues>
+      <AreaCodeType ID="1">ISO 3166 (2)</AreaCodeType>
+    </AreaCodeTypeValues>
+    <CalendarTypeValues>
+      <CalendarType ID="1">Gregorian</CalendarType>
+    </CalendarTypeValues>
+    <CountryValues>
+      <Country ID="11033" ISO2="AO">Angola</Country>
+      <Country ID="11036" ISO2="AM">Armenia</Country>
+      <Country ID="11038" ISO2="AT">Austria</Country>
+      <Country ID="11039" ISO2="AZ">Azerbaijan</Country>
+      <Country ID="11044" ISO2="BY">Belarus</Country>
+      <Country ID="11056" ISO2="MM">Burma</Country>
+      <Country ID="11065" ISO2="CN">China</Country>
+      <Country ID="11074" ISO2="CY">Cyprus</Country>
+      <Country ID="11079" ISO2="DO">Dominican Republic</Country>
+      <Country ID="11093" ISO2="GE">Georgia</Country>
+      <Country ID="11102" ISO2="HT">Haiti</Country>
+      <Country ID="11107" ISO2="IN">India</Country>
+      <Country ID="11109" ISO2="IR">Iran</Country>
+      <Country ID="11117" ISO2="KZ">Kazakhstan</Country>
+      <Country ID="11132" ISO2="LU">Luxembourg</Country>
+      <Country ID="11147" ISO2="MN">Mongolia</Country>
+      <Country ID="11153" ISO2="NL">Netherlands</Country>
+      <Country ID="11171" ISO2="RU">Russia</Country>
+      <Country ID="11181" ISO2="RS">Serbia</Country>
+      <Country ID="11196" ISO2="CH">Switzerland</Country>
+      <Country ID="11205" ISO2="TR">Turkey</Country>
+      <Country ID="11209" ISO2="UA">Ukraine</Country>
+      <Country ID="11212" ISO2="US">United States</Country>
+      <Country ID="11230" ISO2="KY">Cayman Islands</Country>
+      <Country ID="11245" ISO2="GG">Guernsey</Country>
+      <Country ID="11247" ISO2="HK">Hong Kong</Country>
+      <Country ID="11278" ISO2="VG">Virgin Islands, British</Country>
+      <Country ID="11291">undetermined</Country>
+      <Country ID="91021" ISO2="PS">Palestinian</Country>
+    </CountryValues>
+    <CountryRelevanceValues>
+      <CountryRelevance ID="1413">PRIMARY</CountryRelevance>
+    </CountryRelevanceValues>
+    <DecisionMakingBodyValues>
+      <DecisionMakingBody ID="1" OrganisationID="1">United States Treasury Department</DecisionMakingBody>
+    </DecisionMakingBodyValues>
+    <DetailReferenceValues>
+      <DetailReference ID="91473">Subject to Secondary Sanctions</DetailReference>
+      <DetailReference ID="91521">Subject to Directive 1</DetailReference>
+      <DetailReference ID="91522">Subject to Directive 2</DetailReference>
+      <DetailReference ID="91523">Subject to Directive 3</DetailReference>
+      <DetailReference ID="91524">Subject to Directive 4</DetailReference>
+      <DetailReference ID="91526">Male</DetailReference>
+      <DetailReference ID="91527">Female</DetailReference>
+      <DetailReference ID="91771">SANCTIONS ON PRINCIPAL EXECUTIVE OFFICERS. Sec 235(a)(12)</DetailReference>
+      <DetailReference ID="91772">EXPORT SANCTIONS Sec. 235(a)(2)</DetailReference>
+      <DetailReference ID="91773">LOANS FROM UNITED STATES FINANCIAL INSTITUTIONS. Sec. 235(a)(3)</DetailReference>
+      <DetailReference ID="91774">LOANS FROM INTERNATIONAL FINANCIAL INSTITUTIONS. Sec. 235(a)(4)</DetailReference>
+      <DetailReference ID="91865">EXPORT-IMPORT BANK ASSISTANCE FOR EXPORTS TO SANCTIONED PERSONS. Sec. 235(a)(1)</DetailReference>
+      <DetailReference ID="91944">Extraction of crude petroleum</DetailReference>
+      <DetailReference ID="91975">Central banking</DetailReference>
+      <DetailReference ID="91976">Activities of holding companies</DetailReference>
+      <DetailReference ID="91978">Financial leasing</DetailReference>
+      <DetailReference ID="91980">Real estate activities on a fee or contract basis</DetailReference>
+      <DetailReference ID="92010">pursuant to the Hong Kong Autonomy Act of 2020 - Public Law 116-149</DetailReference>
+      <DetailReference ID="92033">Private Company</DetailReference>
+      <DetailReference ID="92034">Public Company</DetailReference>
+      <DetailReference ID="92036">Financial Institution</DetailReference>
+      <DetailReference ID="92048">State-Owned Enterprise</DetailReference>
+      <DetailReference ID="92062">Government Entity</DetailReference>
+      <DetailReference ID="92077">Ukraine-/Russia-Related Sanctions Regulations, 31 CFR 589.201 and/or 589.209</DetailReference>
+      <DetailReference ID="92084">section 1(b) of Executive Order 13224, as amended by Executive Order 13886</DetailReference>
+      <DetailReference ID="92097">For more information on directives, please visit the following link: https://home.treasury.gov/policy-issues/financial-sanctions/sanctions-programs-and-country-information/russian-harmful-foreign-activities-sanctions#directives</DetailReference>
+      <DetailReference ID="92098">Subject to Directive 3 - All transactions in, provision of financing for, and other dealings in new debt of longer than 14 days maturity or new equity where such new debt or new equity is issued on or after the 'Effective Date (EO 14024 Directive)' associated with this name are prohibited.</DetailReference>
+      <DetailReference ID="92099">Subject to Directive 1a - As of the effective date, participation in the secondary market for ruble or non-ruble denominated bonds issued on or after the effective date by the Central Bank of the Russian Federation, the National Wealth Fund of the Russian Federation, or the Ministry of Finance of the Russian Federation is prohibited.</DetailReference>
+      <DetailReference ID="92101">Subject to Directive 4 - any transaction involving the Central Bank of the Russian Federation, the National Wealth Fund of the Russian Federation, or the Ministry of Finance of the Russian Federation, including any transfer of assets to such entities or any foreign exchange transaction for or on behalf of such entities is prohibited.</DetailReference>
+      <DetailReference ID="92726">Subject to Directive 1 - As of the effective date, the provision, exportation, or reexportation, directly or indirectly, of financial services to or for the benefit of Myanma Oil and Gas Enterprise (MOGE) or its property or interests in property is prohibited.</DetailReference>
+      <DetailReference ID="92727">For more information on directives, please visit the following link: https://ofac.treasury.gov/sanctions-programs-and-country-information/burma#directives</DetailReference>
+      <DetailReference ID="92764">See Section 11 of Executive Order 14024.</DetailReference>
+      <DetailReference ID="92784">Prohibition on any United States financial institution from making loans or providing credit to this target</DetailReference>
+      <DetailReference ID="92785">Prohibition on any transactions in foreign exchange that are subject to the jurisdiction of the United States and in which this target has any interest</DetailReference>
+      <DetailReference ID="92786">Prohibition on any United States person from investing in or purchasing significant amounts of equity or debt instruments of this target</DetailReference>
+      <DetailReference ID="92866">BLOCKING OF PROPERTY (entity). Sec.2(b)(1)(A) - All property and interests in property of this entity are blocked, and all transactions with this entity are prohibited, except for the importation of goods.</DetailReference>
+      <DetailReference ID="92870">LOANS FROM UNITED STATES FINANCIAL INSTITUTIONS. Sec.2(b)(1)(D) - United States financial institutions are prohibited from making loans or providing credits to this entity totaling more than $10,000,000 in any 12-month period, subject to the exception set forth in PAIPA Section 2(b)(1)(D).</DetailReference>
+      <DetailReference ID="92875">FOREIGN EXCHANGE. Sec.2(b)(1)(H) - Transactions in foreign exchange that are subject to the jurisdiction of the United States and in which this entity has any interest are prohibited.</DetailReference>
+      <DetailReference ID="92876">BANKING TRANSACTIONS. Sec.2(b)(1)(I) - Any transfers of credit or payments between financial institutions or by, through, or to any financial institution, to the extent that such transfers or payments are subject to the jurisdiction of the United States and involve any interest of this entity, are prohibited.</DetailReference>
+      <DetailReference ID="92877">BAN ON INVESTMENT IN EQUITY OR DEBT OF SANCTIONED PERSON. Sec.2(b)(1)(J) - Any United States person is prohibited from investing in or purchasing significant amounts of equity or debt instruments of this entity.</DetailReference>
+      <DetailReference ID="92895">BLOCKING OF PROPERTY. Sec.6(b)(1)(A),(B),(C) - All property and interests in property of this individual are blocked, and all transactions with this individual are prohibited, except for the importation of goods.</DetailReference>
+    </DetailReferenceValues>
+    <DetailTypeValues>
+      <DetailType ID="1430">DATE</DetailType>
+      <DetailType ID="1431">LOOKUP</DetailType>
+      <DetailType ID="1432">TEXT</DetailType>
+      <DetailType ID="1433">COUNTRY</DetailType>
+    </DetailTypeValues>
+    <DocNameStatusValues>
+      <DocNameStatus ID="1">Primary Latin</DocNameStatus>
+      <DocNameStatus ID="2">Others</DocNameStatus>
+    </DocNameStatusValues>
+    <EntryEventTypeValues>
+      <EntryEventType ID="1">Created</EntryEventType>
+    </EntryEventTypeValues>
+    <EntryLinkTypeValues />
+    <ExRefTypeValues />
+    <FeatureTypeValues>
+      <FeatureType ID="8" FeatureTypeGroupID="1">Birthdate</FeatureType>
+      <FeatureType ID="9" FeatureTypeGroupID="1">Place of Birth</FeatureType>
+      <FeatureType ID="10" FeatureTypeGroupID="1">Nationality Country</FeatureType>
+      <FeatureType ID="11" FeatureTypeGroupID="1">Citizenship Country</FeatureType>
+      <FeatureType ID="13" FeatureTypeGroupID="1">SWIFT/BIC</FeatureType>
+      <FeatureType ID="14" FeatureTypeGroupID="1">Website</FeatureType>
+      <FeatureType ID="21" FeatureTypeGroupID="1">Email Address</FeatureType>
+      <FeatureType ID="25" FeatureTypeGroupID="1">Location</FeatureType>
+      <FeatureType ID="26" FeatureTypeGroupID="1">Title</FeatureType>
+      <FeatureType ID="125" FeatureTypeGroupID="1">Additional Sanctions Information -</FeatureType>
+      <FeatureType ID="164" FeatureTypeGroupID="1">BIK (RU)</FeatureType>
+      <FeatureType ID="204" FeatureTypeGroupID="1">Executive Order 13662 Directive Determination -</FeatureType>
+      <FeatureType ID="224" FeatureTypeGroupID="1">Gender</FeatureType>
+      <FeatureType ID="365" FeatureTypeGroupID="1">Nationality of Registration</FeatureType>
+      <FeatureType ID="504" FeatureTypeGroupID="1">Secondary sanctions risk:</FeatureType>
+      <FeatureType ID="525" FeatureTypeGroupID="1">CAATSA Section 235 Information:</FeatureType>
+      <FeatureType ID="646" FeatureTypeGroupID="1">Organization Established Date</FeatureType>
+      <FeatureType ID="647" FeatureTypeGroupID="1">Organization Type:</FeatureType>
+      <FeatureType ID="766" FeatureTypeGroupID="1">Equity Ticker</FeatureType>
+      <FeatureType ID="767" FeatureTypeGroupID="1">Issuer Name</FeatureType>
+      <FeatureType ID="806" FeatureTypeGroupID="1">ISIN</FeatureType>
+      <FeatureType ID="826" FeatureTypeGroupID="1">Target Type</FeatureType>
+      <FeatureType ID="867" FeatureTypeGroupID="1">Effective Date (CMIC)</FeatureType>
+      <FeatureType ID="868" FeatureTypeGroupID="1">Purchase/Sales For Divestment Date (CMIC)</FeatureType>
+      <FeatureType ID="869" FeatureTypeGroupID="1">Listing Date (CMIC)</FeatureType>
+      <FeatureType ID="947" FeatureTypeGroupID="1">Executive Order 14024 Directive Information -</FeatureType>
+      <FeatureType ID="948" FeatureTypeGroupID="1">Executive Order 14024 Directive Information</FeatureType>
+      <FeatureType ID="949" FeatureTypeGroupID="1">Listing Date (EO 14024 Directive 1a):</FeatureType>
+      <FeatureType ID="950" FeatureTypeGroupID="1">Effective Date (EO 14024 Directive 1a):</FeatureType>
+      <FeatureType ID="951" FeatureTypeGroupID="1">Listing Date (EO 14024 Directive 2):</FeatureType>
+      <FeatureType ID="952" FeatureTypeGroupID="1">Effective Date (EO 14024 Directive 2):</FeatureType>
+      <FeatureType ID="953" FeatureTypeGroupID="1">Listing Date (EO 14024 Directive 3):</FeatureType>
+      <FeatureType ID="954" FeatureTypeGroupID="1">Effective Date (EO 14024 Directive 3):</FeatureType>
+      <FeatureType ID="1047" FeatureTypeGroupID="1">Executive Order 14014 Directive Information:</FeatureType>
+      <FeatureType ID="1048" FeatureTypeGroupID="1">Listing Date (EO 14014 Directive 1):</FeatureType>
+      <FeatureType ID="1049" FeatureTypeGroupID="1">Effective Date (EO 14014 Directive 1):</FeatureType>
+      <FeatureType ID="1107" FeatureTypeGroupID="1">Executive Order 14059 information:</FeatureType>
+      <FeatureType ID="1187" FeatureTypeGroupID="1">PAIPA Section 2 Information:</FeatureType>
+      <FeatureType ID="1227" FeatureTypeGroupID="1">HKAA Section 6 Information:</FeatureType>
+    </FeatureTypeValues>
+    <FeatureTypeGroupValues>
+      <FeatureTypeGroup ID="1">Unknown</FeatureTypeGroup>
+    </FeatureTypeGroupValues>
+    <IDRegDocDateTypeValues>
+      <IDRegDocDateType ID="1480">Issue Date</IDRegDocDateType>
+      <IDRegDocDateType ID="1481">Expiration Date</IDRegDocDateType>
+    </IDRegDocDateTypeValues>
+    <IDRegDocTypeValues>
+      <IDRegDocType ID="1571">Passport</IDRegDocType>
+      <IDRegDocType ID="1577">Driver's License No.</IDRegDocType>
+      <IDRegDocType ID="1584">National ID No.</IDRegDocType>
+      <IDRegDocType ID="1585">Registration ID</IDRegDocType>
+      <IDRegDocType ID="1589">V.A.T. Number</IDRegDocType>
+      <IDRegDocType ID="1596">Tax ID No.</IDRegDocType>
+      <IDRegDocType ID="1602">C.R. No.</IDRegDocType>
+      <IDRegDocType ID="1636">Government Gazette Number</IDRegDocType>
+      <IDRegDocType ID="91412">Company Number</IDRegDocType>
+      <IDRegDocType ID="91475">Public Registration Number</IDRegDocType>
+      <IDRegDocType ID="91504">License</IDRegDocType>
+      <IDRegDocType ID="91752">Legal Entity Number</IDRegDocType>
+      <IDRegDocType ID="91760">Business Registration Number</IDRegDocType>
+      <IDRegDocType ID="91761">Registration Number</IDRegDocType>
+      <IDRegDocType ID="92001">Unified Social Credit Code (USCC)</IDRegDocType>
+    </IDRegDocTypeValues>
+    <IdentityFeatureLinkTypeValues>
+      <IdentityFeatureLinkType ID="1">Unknown</IdentityFeatureLinkType>
+    </IdentityFeatureLinkTypeValues>
+    <LegalBasisValues>
+      <LegalBasis ID="1" LegalBasisShortRef="Unknown" LegalBasisTypeID="1" SanctionsProgramID="1">Unknown</LegalBasis>
+      <LegalBasis ID="1828" LegalBasisShortRef="Executive Order 13224 (Terrorism)" LegalBasisTypeID="1" SanctionsProgramID="1">Executive Order 13224 (Terrorism)</LegalBasis>
+      <LegalBasis ID="91262" LegalBasisShortRef="General License 4 Under EO 13224 (Terrorism)" LegalBasisTypeID="1" SanctionsProgramID="1">General License 4 Under EO 13224 (Terrorism)</LegalBasis>
+      <LegalBasis ID="91414" LegalBasisShortRef="CISADA" LegalBasisTypeID="1" SanctionsProgramID="1">CISADA</LegalBasis>
+      <LegalBasis ID="91503" LegalBasisShortRef="Executive Order 13662 (Ukraine)" LegalBasisTypeID="1" SanctionsProgramID="1">Executive Order 13662 (Ukraine)</LegalBasis>
+      <LegalBasis ID="91703" LegalBasisShortRef="Executive Order 13685 (Ukraine)" LegalBasisTypeID="1" SanctionsProgramID="1">Executive Order 13685 (Ukraine)</LegalBasis>
+      <LegalBasis ID="91777" LegalBasisShortRef="CAATSA - Section 231" LegalBasisTypeID="1" SanctionsProgramID="1">CAATSA - Section 231</LegalBasis>
+      <LegalBasis ID="91811" LegalBasisShortRef="Executive Order 13850 (Venezuela)" LegalBasisTypeID="1" SanctionsProgramID="1">Executive Order 13850 (Venezuela)</LegalBasis>
+      <LegalBasis ID="91902" LegalBasisShortRef="Executive Order 13902 (Iran)" LegalBasisTypeID="1" SanctionsProgramID="1">Executive Order 13902 (Iran)</LegalBasis>
+      <LegalBasis ID="91904" LegalBasisShortRef="Executive Order 14059 (Illicit Drugs)" LegalBasisTypeID="1" SanctionsProgramID="1">Executive Order 14059 (Illicit Drugs)</LegalBasis>
+      <LegalBasis ID="92003" LegalBasisShortRef="Executive Order - Convential Arms (Iran)" LegalBasisTypeID="1" SanctionsProgramID="1">Executive Order - Convential Arms (Iran)</LegalBasis>
+      <LegalBasis ID="92031" LegalBasisShortRef="Executive Order 14014" LegalBasisTypeID="1" SanctionsProgramID="1">Executive Order 14014</LegalBasis>
+      <LegalBasis ID="92049" LegalBasisShortRef="Executive Order 14024 (Russia)" LegalBasisTypeID="1" SanctionsProgramID="1">Executive Order 14024 (Russia)</LegalBasis>
+      <LegalBasis ID="92053" LegalBasisShortRef="Executive Order 14032 (CMIC)" LegalBasisTypeID="1" SanctionsProgramID="1">Executive Order 14032 (CMIC)</LegalBasis>
+      <LegalBasis ID="92880" LegalBasisShortRef="PAIPA" LegalBasisTypeID="1" SanctionsProgramID="1">PAIPA</LegalBasis>
+      <LegalBasis ID="92890" LegalBasisShortRef="HKAA" LegalBasisTypeID="1" SanctionsProgramID="1">HKAA</LegalBasis>
+    </LegalBasisValues>
+    <LegalBasisTypeValues>
+      <LegalBasisType ID="1">Unknown</LegalBasisType>
+    </LegalBasisTypeValues>
+    <ListValues>
+      <List ID="1550">SDN List</List>
+      <List ID="91243">Non-SDN Palestinian Legislative Council List</List>
+      <List ID="91507">Sectoral Sanctions Identifications List</List>
+      <List ID="91512">Consolidated List</List>
+      <List ID="91763">CAPTA List</List>
+      <List ID="91868">Non-SDN Menu-Based Sanctions List</List>
+      <List ID="92052">Non-SDN CMIC List</List>
+    </ListValues>
+    <LocPartTypeValues>
+      <LocPartType ID="1">Unknown</LocPartType>
+      <LocPartType ID="1450">REGION</LocPartType>
+      <LocPartType ID="1451">ADDRESS1</LocPartType>
+      <LocPartType ID="1452">ADDRESS2</LocPartType>
+      <LocPartType ID="1453">ADDRESS3</LocPartType>
+      <LocPartType ID="1454">CITY</LocPartType>
+      <LocPartType ID="1455">STATE/PROVINCE</LocPartType>
+      <LocPartType ID="1456">POSTAL CODE</LocPartType>
+    </LocPartTypeValues>
+    <LocPartValueStatusValues>
+      <LocPartValueStatus ID="1">Main</LocPartValueStatus>
+    </LocPartValueStatusValues>
+    <LocPartValueTypeValues>
+      <LocPartValueType ID="1">Unknown</LocPartValueType>
+    </LocPartValueTypeValues>
+    <NamePartTypeValues>
+      <NamePartType ID="1520">Last Name</NamePartType>
+      <NamePartType ID="1521">First Name</NamePartType>
+      <NamePartType ID="1522">Middle Name</NamePartType>
+      <NamePartType ID="1525">Entity Name</NamePartType>
+      <NamePartType ID="1528">Nickname</NamePartType>
+    </NamePartTypeValues>
+    <OrganisationValues>
+      <Organisation ID="1" CountryID="11212">State</Organisation>
+    </OrganisationValues>
+    <PartySubTypeValues>
+      <PartySubType ID="1" PartyTypeID="4">Vessel</PartySubType>
+      <PartySubType ID="2" PartyTypeID="4">Aircraft</PartySubType>
+      <PartySubType ID="3" PartyTypeID="2">Unknown</PartySubType>
+      <PartySubType ID="4" PartyTypeID="1">Unknown</PartySubType>
+    </PartySubTypeValues>
+    <PartyTypeValues>
+      <PartyType ID="1">Individual</PartyType>
+      <PartyType ID="2">Entity</PartyType>
+      <PartyType ID="3">Location</PartyType>
+      <PartyType ID="4">Transport</PartyType>
+      <PartyType ID="5">Other Entity</PartyType>
+    </PartyTypeValues>
+    <RelationQualityValues>
+      <RelationQuality ID="1540">High</RelationQuality>
+      <RelationQuality ID="1">Unknown</RelationQuality>
+    </RelationQualityValues>
+    <RelationTypeValues>
+      <RelationType ID="15002" Symmetrical="false">Acting for or on behalf of</RelationType>
+      <RelationType ID="15003" Symmetrical="false">Owned or Controlled By</RelationType>
+      <RelationType ID="92019" Symmetrical="false">Owns, controls, or operates</RelationType>
+    </RelationTypeValues>
+    <ReliabilityValues>
+      <Reliability ID="1560">Confirmed</Reliability>
+      <Reliability ID="91479">Reported</Reliability>
+      <Reliability ID="1">Unknown</Reliability>
+    </ReliabilityValues>
+    <SanctionsProgramValues>
+      <SanctionsProgram ID="1" SubsidiaryBodyID="1">Unknown</SanctionsProgram>
+      <SanctionsProgram ID="211" SubsidiaryBodyID="1">SDGT</SanctionsProgram>
+      <SanctionsProgram ID="91055" SubsidiaryBodyID="1">NS-PLC</SanctionsProgram>
+      <SanctionsProgram ID="91502" SubsidiaryBodyID="1">UKRAINE-EO13662</SanctionsProgram>
+      <SanctionsProgram ID="91702" SubsidiaryBodyID="1">UKRAINE-EO13685</SanctionsProgram>
+      <SanctionsProgram ID="91757" SubsidiaryBodyID="1">CAATSA - RUSSIA</SanctionsProgram>
+      <SanctionsProgram ID="91810" SubsidiaryBodyID="1">VENEZUELA-EO13850</SanctionsProgram>
+      <SanctionsProgram ID="91830" SubsidiaryBodyID="1">561-Related</SanctionsProgram>
+      <SanctionsProgram ID="91901" SubsidiaryBodyID="1">IRAN-EO13902</SanctionsProgram>
+      <SanctionsProgram ID="91903" SubsidiaryBodyID="1">ILLICIT-DRUGS-EO14059</SanctionsProgram>
+      <SanctionsProgram ID="92002" SubsidiaryBodyID="1">IRAN-CON-ARMS-EO</SanctionsProgram>
+      <SanctionsProgram ID="92030" SubsidiaryBodyID="1">BURMA-EO14014</SanctionsProgram>
+      <SanctionsProgram ID="92042" SubsidiaryBodyID="1">RUSSIA-EO14024</SanctionsProgram>
+      <SanctionsProgram ID="92051" SubsidiaryBodyID="1">CMIC-EO13959</SanctionsProgram>
+      <SanctionsProgram ID="92865" SubsidiaryBodyID="1">PAIPA</SanctionsProgram>
+      <SanctionsProgram ID="92889" SubsidiaryBodyID="1">HKAA</SanctionsProgram>
+    </SanctionsProgramValues>
+    <SanctionsTypeValues>
+      <SanctionsType ID="1705">Block</SanctionsType>
+      <SanctionsType ID="1706">Reject</SanctionsType>
+      <SanctionsType ID="91416">561 Full Restrictions</SanctionsType>
+      <SanctionsType ID="91505">13662 Sectoral Directive 1</SanctionsType>
+      <SanctionsType ID="91506">13662 Sectoral Directive 2</SanctionsType>
+      <SanctionsType ID="91513">13662 Sectoral Directive 3</SanctionsType>
+      <SanctionsType ID="91514">13662 Sectoral Directive 4</SanctionsType>
+      <SanctionsType ID="91867">CAATSA Section 231/235 Sanctions</SanctionsType>
+      <SanctionsType ID="92047">Executive Order 13959 Sanctions</SanctionsType>
+      <SanctionsType ID="92054">CMIC Executive Order</SanctionsType>
+      <SanctionsType ID="92087">Executive Order 14024 Directive 3</SanctionsType>
+      <SanctionsType ID="92093">Executive Order 14024 Directive 2</SanctionsType>
+      <SanctionsType ID="92094">Executive Order 14024 Directive 1a</SanctionsType>
+      <SanctionsType ID="92102">Executive Order 14024 Directive 4</SanctionsType>
+      <SanctionsType ID="92725">Executive Order 14014 Directive 1</SanctionsType>
+      <SanctionsType ID="92787">Executive Order 14059 Non-blocking</SanctionsType>
+      <SanctionsType ID="92894">Hong Kong Autonomy Act (PL 116-149) Sanctions - Please review the sanctions info on each listing</SanctionsType>
+      <SanctionsType ID="92910">PAIPA (PL 117-336) Sanctions - Please review the sanctions info on each listing</SanctionsType>
+      <SanctionsType ID="1">Program</SanctionsType>
+    </SanctionsTypeValues>
+    <ScriptValues>
+      <Script ID="501" ScriptCode="Hans">Chinese Simplified</Script>
+      <Script ID="502" ScriptCode="Hant">Chinese Traditional</Script>
+      <Script ID="220" ScriptCode="Cyrl">Cyrillic</Script>
+      <Script ID="215" ScriptCode="Latin">Latin</Script>
+    </ScriptValues>
+    <ScriptStatusValues>
+      <ScriptStatus ID="1">Unknown</ScriptStatus>
+    </ScriptStatusValues>
+    <SubsidiaryBodyValues>
+      <SubsidiaryBody ID="1" Notional="false" DecisionMakingBodyID="1">Office of Foreign Assets Control</SubsidiaryBody>
+    </SubsidiaryBodyValues>
+    <SupInfoTypeValues />
+    <TargetTypeValues />
+    <ValidityValues>
+      <Validity ID="1">Valid</Validity>
+      <Validity ID="2">Fraudulent</Validity>
+    </ValidityValues>
+  </ReferenceValueSets>
+  <Locations>
+    <Location ID="22761">
+      <LocationAreaCode AreaCodeID="11065" />
+      <LocationCountry CountryID="11065" CountryRelevanceID="1413" />
+      <LocationPart LocPartTypeID="1451">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>172 Xibin Rd</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1452">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>Ranghulu District</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1453">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>(Daqing, Heilongjiang Branch)</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1454">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>Daqing</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1456">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>163453</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <FeatureVersionReference FeatureVersionID="222761" />
+    </Location>
+    <Location ID="22762">
+      <LocationAreaCode AreaCodeID="11065" />
+      <LocationCountry CountryID="11065" CountryRelevanceID="1413" />
+      <LocationPart LocPartTypeID="1451">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>9 Dongzhimen North Street</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1452">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>Dongcheng District</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1453">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>(Head Office)</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1454">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>Beijing</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1456">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>100007</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <FeatureVersionReference FeatureVersionID="222762" />
+    </Location>
+    <Location ID="22763">
+      <LocationAreaCode AreaCodeID="11065" />
+      <LocationCountry CountryID="11065" CountryRelevanceID="1413" />
+      <LocationPart LocPartTypeID="1451">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>No. 7 Century Ave</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1453">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>(Registered Office)</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1454">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>Xinjiang</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1455">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>Karamay</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1456">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>834000</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <FeatureVersionReference FeatureVersionID="222763" />
+    </Location>
+    <Location ID="22764">
+      <LocationAreaCode AreaCodeID="11065" />
+      <LocationCountry CountryID="11065" CountryRelevanceID="1413" />
+      <LocationPart LocPartTypeID="1451">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>No. 68 Zhongya South Rd</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1452">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>Economic and Technological Development Zone</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1453">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>(Urumqi, Xinjiang Branch)</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1454">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>Urumqi</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <LocationPart LocPartTypeID="1456">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>830026</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <FeatureVersionReference FeatureVersionID="222764" />
+    </Location>
+    <Location ID="68713">
+      <LocationAreaCode AreaCodeID="11291" />
+      <LocationPart LocPartTypeID="1450">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>Gaza</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <FeatureVersionReference FeatureVersionID="268713" />
+    </Location>
+    <Location ID="266021">
+      <LocationPart LocPartTypeID="1">
+        <LocationPartValue Primary="true" LocPartValueTypeID="1" LocPartValueStatusID="1">
+          <Comment />
+          <Value>Palestinian</Value>
+        </LocationPartValue>
+      </LocationPart>
+      <FeatureVersionReference FeatureVersionID="64496" />
+    </Location>
+    </Locations>
+  <IDRegDocuments>
+    </IDRegDocuments>
+  <DistinctParties>
+    <DistinctParty FixedRef="9647">
+      <Comment />
+      <Profile ID="9647" PartySubTypeID="4">
+        <Identity ID="1986" FixedRef="9647" Primary="true" False="false">
+          <Alias FixedRef="9647" AliasTypeID="1400" Primary="false" LowQuality="false">
+            <DocumentedName ID="10152" FixedRef="9647" DocNameStatusID="2">
+              <DocumentedNamePart>
+                <NamePartValue NamePartGroupID="15052" ScriptID="215" ScriptStatusID="1" Acronym="false">AL ZAHAR</NamePartValue>
+              </DocumentedNamePart>
+              <DocumentedNamePart>
+                <NamePartValue NamePartGroupID="15053" ScriptID="215" ScriptStatusID="1" Acronym="false">Mahmoud Khaled</NamePartValue>
+              </DocumentedNamePart>
+            </DocumentedName>
+          </Alias>
+          <Alias FixedRef="9647" AliasTypeID="1403" Primary="true" LowQuality="false">
+            <DocumentedName ID="1986" FixedRef="9647" DocNameStatusID="1">
+              <DocumentedNamePart>
+                <NamePartValue NamePartGroupID="38321" ScriptID="215" ScriptStatusID="1" Acronym="false">ZAHHAR</NamePartValue>
+              </DocumentedNamePart>
+              <DocumentedNamePart>
+                <NamePartValue NamePartGroupID="38322" ScriptID="215" ScriptStatusID="1" Acronym="false">Mahmoud Khaled</NamePartValue>
+              </DocumentedNamePart>
+            </DocumentedName>
+          </Alias>
+          <Alias FixedRef="9647" AliasTypeID="1400" Primary="false" LowQuality="true">
+            <DocumentedName ID="69358" FixedRef="9647" DocNameStatusID="2">
+              <DocumentedNamePart>
+                <NamePartValue NamePartGroupID="121774" ScriptID="215" ScriptStatusID="1" Acronym="false">Zahar</NamePartValue>
+              </DocumentedNamePart>
+              <DocumentedNamePart>
+                <NamePartValue NamePartGroupID="121775" ScriptID="215" ScriptStatusID="1" Acronym="false">Mahmoud</NamePartValue>
+              </DocumentedNamePart>
+            </DocumentedName>
+          </Alias>
+          <Alias FixedRef="9647" AliasTypeID="1400" Primary="false" LowQuality="true">
+            <DocumentedName ID="69359" FixedRef="9647" DocNameStatusID="2">
+              <DocumentedNamePart>
+                <NamePartValue NamePartGroupID="121776" ScriptID="215" ScriptStatusID="1" Acronym="false">al-Zahar</NamePartValue>
+              </DocumentedNamePart>
+              <DocumentedNamePart>
+                <NamePartValue NamePartGroupID="121777" ScriptID="215" ScriptStatusID="1" Acronym="false">Mahmoud</NamePartValue>
+              </DocumentedNamePart>
+            </DocumentedName>
+          </Alias>
+          <NamePartGroups>
+            <MasterNamePartGroup>
+              <NamePartGroup ID="15052" NamePartTypeID="1520" />
+            </MasterNamePartGroup>
+            <MasterNamePartGroup>
+              <NamePartGroup ID="15053" NamePartTypeID="1521" />
+            </MasterNamePartGroup>
+            <MasterNamePartGroup>
+              <NamePartGroup ID="38321" NamePartTypeID="1520" />
+            </MasterNamePartGroup>
+            <MasterNamePartGroup>
+              <NamePartGroup ID="38322" NamePartTypeID="1521" />
+            </MasterNamePartGroup>
+            <MasterNamePartGroup>
+              <NamePartGroup ID="121774" NamePartTypeID="1520" />
+            </MasterNamePartGroup>
+            <MasterNamePartGroup>
+              <NamePartGroup ID="121775" NamePartTypeID="1521" />
+            </MasterNamePartGroup>
+            <MasterNamePartGroup>
+              <NamePartGroup ID="121776" NamePartTypeID="1520" />
+            </MasterNamePartGroup>
+            <MasterNamePartGroup>
+              <NamePartGroup ID="121777" NamePartTypeID="1521" />
+            </MasterNamePartGroup>
+          </NamePartGroups>
+        </Identity>
+        <Feature ID="4708" FeatureTypeID="8">
+          <FeatureVersion ID="1622" ReliabilityID="1">
+            <Comment />
+            <DatePeriod CalendarTypeID="1" YearFixed="false" MonthFixed="false" DayFixed="false">
+              <Start Approximate="false" YearFixed="false" MonthFixed="false" DayFixed="false">
+                <From>
+                  <Year>1945</Year>
+                  <Month>1</Month>
+                  <Day>1</Day>
+                </From>
+                <To>
+                  <Year>1945</Year>
+                  <Month>1</Month>
+                  <Day>1</Day>
+                </To>
+              </Start>
+              <End Approximate="false" YearFixed="false" MonthFixed="false" DayFixed="false">
+                <From>
+                  <Year>1945</Year>
+                  <Month>12</Month>
+                  <Day>31</Day>
+                </From>
+                <To>
+                  <Year>1945</Year>
+                  <Month>12</Month>
+                  <Day>31</Day>
+                </To>
+              </End>
+            </DatePeriod>
+            <VersionDetail DetailTypeID="1430" />
+          </FeatureVersion>
+          <IdentityReference IdentityID="1986" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+        <Feature ID="66815" FeatureTypeID="9">
+          <FeatureVersion ID="64494" ReliabilityID="1">
+            <Comment />
+            <VersionDetail DetailTypeID="1432">Gaza Strip</VersionDetail>
+          </FeatureVersion>
+          <IdentityReference IdentityID="1986" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+        <Feature ID="66816" FeatureTypeID="224">
+          <FeatureVersion ID="64495" ReliabilityID="1">
+            <Comment />
+            <VersionDetail DetailTypeID="1431" DetailReferenceID="91526" />
+          </FeatureVersion>
+          <IdentityReference IdentityID="1986" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+        <Feature ID="66817" FeatureTypeID="10">
+          <FeatureVersion ID="64496" ReliabilityID="1">
+            <Comment />
+            <VersionDetail DetailTypeID="1433" />
+            <VersionLocation LocationID="266021" />
+          </FeatureVersion>
+          <IdentityReference IdentityID="1986" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+        <Feature ID="66818" FeatureTypeID="504">
+          <FeatureVersion ID="64497" ReliabilityID="1">
+            <Comment />
+            <VersionDetail DetailTypeID="1431" DetailReferenceID="92084" />
+          </FeatureVersion>
+          <IdentityReference IdentityID="1986" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+        <Feature ID="218713" FeatureTypeID="25">
+          <FeatureVersion ID="268713" ReliabilityID="1">
+            <Comment />
+            <VersionLocation LocationID="68713" />
+          </FeatureVersion>
+          <IdentityReference IdentityID="1986" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+      </Profile>
+    </DistinctParty>
+    <DistinctParty FixedRef="15268">
+      <Comment>United States financial institutions are prohibited from opening or maintaining a correspondent account or a payable-through account for the foreign financial institution listed here, pursuant to 31 C.F.R. section 561.201(c)</Comment>
+      <Profile ID="15268" PartySubTypeID="3">
+        <Identity ID="7012" FixedRef="15268" Primary="true" False="false">
+          <Alias FixedRef="15268" AliasTypeID="1403" Primary="true" LowQuality="false">
+            <DocumentedName ID="15795" FixedRef="15268" DocNameStatusID="1">
+              <DocumentedNamePart>
+                <NamePartValue NamePartGroupID="68936" ScriptID="215" ScriptStatusID="1" Acronym="false">BANK OF KUNLUN CO LTD</NamePartValue>
+              </DocumentedNamePart>
+            </DocumentedName>
+          </Alias>
+          <Alias FixedRef="15268" AliasTypeID="1401" Primary="false" LowQuality="false">
+            <DocumentedName ID="15796" FixedRef="15268" DocNameStatusID="2">
+              <DocumentedNamePart>
+                <NamePartValue NamePartGroupID="23865" ScriptID="215" ScriptStatusID="1" Acronym="false">KARAMAY URBAN CREDIT COOPERATIVES</NamePartValue>
+              </DocumentedNamePart>
+            </DocumentedName>
+          </Alias>
+          <Alias FixedRef="15268" AliasTypeID="1401" Primary="false" LowQuality="false">
+            <DocumentedName ID="15797" FixedRef="15268" DocNameStatusID="2">
+              <DocumentedNamePart>
+                <NamePartValue NamePartGroupID="23895" ScriptID="215" ScriptStatusID="1" Acronym="false">KARAMAY CITY COMMERCIAL BANK CO LTD.</NamePartValue>
+              </DocumentedNamePart>
+            </DocumentedName>
+          </Alias>
+          <NamePartGroups>
+            <MasterNamePartGroup>
+              <NamePartGroup ID="23865" NamePartTypeID="1525" />
+            </MasterNamePartGroup>
+            <MasterNamePartGroup>
+              <NamePartGroup ID="23895" NamePartTypeID="1525" />
+            </MasterNamePartGroup>
+            <MasterNamePartGroup>
+              <NamePartGroup ID="68936" NamePartTypeID="1525" />
+            </MasterNamePartGroup>
+          </NamePartGroups>
+        </Identity>
+        <Feature ID="11843" FeatureTypeID="13">
+          <FeatureVersion ID="8697" ReliabilityID="1560">
+            <Comment />
+            <VersionDetail DetailTypeID="1432">CKLBCNBJ</VersionDetail>
+          </FeatureVersion>
+          <IdentityReference IdentityID="7012" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+        <Feature ID="172761" FeatureTypeID="25">
+          <FeatureVersion ID="222761" ReliabilityID="1">
+            <Comment />
+            <VersionLocation LocationID="22761" />
+          </FeatureVersion>
+          <IdentityReference IdentityID="7012" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+        <Feature ID="172762" FeatureTypeID="25">
+          <FeatureVersion ID="222762" ReliabilityID="1">
+            <Comment />
+            <VersionLocation LocationID="22762" />
+          </FeatureVersion>
+          <IdentityReference IdentityID="7012" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+        <Feature ID="172763" FeatureTypeID="25">
+          <FeatureVersion ID="222763" ReliabilityID="1">
+            <Comment />
+            <VersionLocation LocationID="22763" />
+          </FeatureVersion>
+          <IdentityReference IdentityID="7012" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+        <Feature ID="172764" FeatureTypeID="25">
+          <FeatureVersion ID="222764" ReliabilityID="1">
+            <Comment />
+            <VersionLocation LocationID="22764" />
+          </FeatureVersion>
+          <IdentityReference IdentityID="7012" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+      </Profile>
+    </DistinctParty>
+    </DistinctParties>
+  <ProfileRelationships>
+    </ProfileRelationships>
+  <SanctionsEntries>
+    <SanctionsEntry ID="9647" ProfileID="9647" ListID="1550">
+      <EntryEvent ID="9647" EntryEventTypeID="1" LegalBasisID="1828">
+        <Comment />
+        <Date CalendarTypeID="1">
+          <Year>2023</Year>
+          <Month>11</Month>
+          <Day>14</Day>
+        </Date>
+      </EntryEvent>
+      <EntryEvent ID="1009647" EntryEventTypeID="1" LegalBasisID="91262">
+        <Comment />
+        <Date CalendarTypeID="1">
+          <Year>2023</Year>
+          <Month>11</Month>
+          <Day>14</Day>
+        </Date>
+      </EntryEvent>
+      <SanctionsMeasure ID="3437" SanctionsTypeID="1706">
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+      <SanctionsMeasure ID="38709" SanctionsTypeID="1705">
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+      <SanctionsMeasure ID="131279" SanctionsTypeID="1">
+        <Comment>NS-PLC</Comment>
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+      <SanctionsMeasure ID="174416" SanctionsTypeID="1">
+        <Comment>SDGT</Comment>
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+    </SanctionsEntry>
+    <SanctionsEntry ID="10009647" ProfileID="9647" ListID="91243">
+      <EntryEvent ID="10009647" EntryEventTypeID="1" LegalBasisID="1828">
+        <Comment />
+        <Date CalendarTypeID="1">
+          <Year>2006</Year>
+          <Month>4</Month>
+          <Day>12</Day>
+        </Date>
+      </EntryEvent>
+      <EntryEvent ID="11009647" EntryEventTypeID="1" LegalBasisID="91262">
+        <Comment />
+        <Date CalendarTypeID="1">
+          <Year>2006</Year>
+          <Month>4</Month>
+          <Day>12</Day>
+        </Date>
+      </EntryEvent>
+      <SanctionsMeasure ID="10003437" SanctionsTypeID="1706">
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+      <SanctionsMeasure ID="10038709" SanctionsTypeID="1705">
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+      <SanctionsMeasure ID="10131279" SanctionsTypeID="1">
+        <Comment>NS-PLC</Comment>
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+      <SanctionsMeasure ID="10174416" SanctionsTypeID="1">
+        <Comment>SDGT</Comment>
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+    </SanctionsEntry>
+    <SanctionsEntry ID="70009647" ProfileID="9647" ListID="91512">
+      <EntryEvent ID="70009647" EntryEventTypeID="1" LegalBasisID="1828">
+        <Comment />
+        <Date CalendarTypeID="1">
+          <Year>2014</Year>
+          <Month>10</Month>
+          <Day>10</Day>
+        </Date>
+      </EntryEvent>
+      <EntryEvent ID="71009647" EntryEventTypeID="1" LegalBasisID="91262">
+        <Comment />
+        <Date CalendarTypeID="1">
+          <Year>2014</Year>
+          <Month>10</Month>
+          <Day>10</Day>
+        </Date>
+      </EntryEvent>
+      <SanctionsMeasure ID="70003437" SanctionsTypeID="1706">
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+      <SanctionsMeasure ID="70038709" SanctionsTypeID="1705">
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+      <SanctionsMeasure ID="70131279" SanctionsTypeID="1">
+        <Comment>NS-PLC</Comment>
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+      <SanctionsMeasure ID="70174416" SanctionsTypeID="1">
+        <Comment>SDGT</Comment>
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+    </SanctionsEntry>
+    <SanctionsEntry ID="70015268" ProfileID="15268" ListID="91512">
+      <EntryEvent ID="70015268" EntryEventTypeID="1" LegalBasisID="91414">
+        <Comment />
+        <Date CalendarTypeID="1">
+          <Year>2014</Year>
+          <Month>10</Month>
+          <Day>10</Day>
+        </Date>
+      </EntryEvent>
+      <SanctionsMeasure ID="70000507" SanctionsTypeID="91416">
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+      <SanctionsMeasure ID="70153139" SanctionsTypeID="1">
+        <Comment>561-Related</Comment>
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+    </SanctionsEntry>
+    <SanctionsEntry ID="110015268" ProfileID="15268" ListID="91763">
+      <EntryEvent ID="110015268" EntryEventTypeID="1" LegalBasisID="91414">
+        <Comment />
+        <Date CalendarTypeID="1">
+          <Year>2019</Year>
+          <Month>3</Month>
+          <Day>14</Day>
+        </Date>
+      </EntryEvent>
+      <SanctionsMeasure ID="110000507" SanctionsTypeID="91416">
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+      <SanctionsMeasure ID="110153139" SanctionsTypeID="1">
+        <Comment>561-Related</Comment>
+        <DatePeriod CalendarTypeID="1" YearFixed="true" MonthFixed="true" DayFixed="true" />
+      </SanctionsMeasure>
+    </SanctionsEntry>
+    </SanctionsEntries>
+  <SanctionsEntryLinks />
+</Sanctions>

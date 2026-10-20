@@ -6,6 +6,7 @@ import os
 import aws_cdk as cdk
 
 from nuwa2.nuwa_api_stack import NuwaApiStack
+from nuwa2.nuwa_watchlist_stack import NuwaWatchlistStack
 
 
 app = cdk.App()
@@ -88,5 +89,26 @@ NuwaApiStack(
     ),
     description="Nuwa 2.0 — API Gateway + Lambdas (sources, chunks, search, reports, admin) us-east-1",
 )
+
+# Early-warning lists: own stack, only when asked for (`-c watchlistEnvironment=dev|prod`), so the usual
+# `deploy --all` of the API does not create or change it. It runs against the prod database for now.
+watchlist_environment = str(app.node.try_get_context("watchlistEnvironment") or "").strip()
+if watchlist_environment:
+    NuwaWatchlistStack(
+        app,
+        f"NuwaWatchlistStack-{watchlist_environment}",
+        environment_name=watchlist_environment,
+        db_environment_name=str(app.node.try_get_context("watchlistDbEnvironment") or "prod"),
+        bff_url=str(
+            app.node.try_get_context("watchlistBffUrl")
+            or ("https://app.nuwa.space/v2" if watchlist_environment == "prod" else "https://dev.nuwa.space/v2")
+        ),
+        schedules_enabled=_truthy_ctx("watchlistSchedules"),
+        env=cdk.Environment(
+            account=_cdk_account,
+            region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),
+        ),
+        description="Nuwa 2.0 — alerta temprana de listas (OFAC propio + SAT): sync diario, cruce y API",
+    )
 
 app.synth()
