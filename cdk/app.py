@@ -6,6 +6,7 @@ import os
 import aws_cdk as cdk
 
 from nuwa2.nuwa_api_stack import NuwaApiStack
+from nuwa2.nuwa_ops_stack import NuwaOpsStack
 from nuwa2.nuwa_watchlist_stack import NuwaWatchlistStack
 
 
@@ -113,6 +114,38 @@ if watchlist_environment:
             region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),
         ),
         description="Nuwa 2.0 — alerta temprana de listas (OFAC propio + SAT): sync diario, cruce y API",
+    )
+
+# Ops alarms (health of BFF, Redis, scraper, OCR, MCP, screening queue, RDS): only with `-c opsEnvironment=dev|prod`.
+ops_environment = str(app.node.try_get_context("opsEnvironment") or "").strip()
+if ops_environment:
+    _ops_prod = ops_environment == "prod"
+    NuwaOpsStack(
+        app,
+        f"NuwaOpsStack-{ops_environment}",
+        environment_name=ops_environment,
+        # dev and prod BFF share the monitoring-worker secret today.
+        secrets_environment_name=str(app.node.try_get_context("opsSecretsEnvironment") or "prod"),
+        bff_url=str(
+            app.node.try_get_context("opsBffUrl")
+            or ("https://app.nuwa.space/v2" if _ops_prod else "https://dev.nuwa.space/v2")
+        ),
+        alert_emails=[e.strip() for e in str(app.node.try_get_context("opsAlertEmails") or "").split(",") if e.strip()],
+        schedule_enabled=_ops_prod or _truthy_ctx("opsSchedule"),
+        dependencies=[
+            d.strip()
+            for d in str(
+                app.node.try_get_context("opsDependencies") or "redisState,redisCache,scraper,ocr,mcp,mcp2"
+            ).split(",")
+            if d.strip()
+        ],
+        expect_screening_worker=str(app.node.try_get_context("opsExpectWorker") or "true").lower() in ("1", "true", "yes"),
+        rds_instance_id=str(app.node.try_get_context("opsRdsInstance") or ("nuwa20" if _ops_prod else "")),
+        env=cdk.Environment(
+            account=_cdk_account,
+            region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),
+        ),
+        description="Nuwa 2.0 — health canary y alarmas (BFF, Redis, scraper, OCR, MCP, cola, RDS) → correo",
     )
 
 app.synth()
