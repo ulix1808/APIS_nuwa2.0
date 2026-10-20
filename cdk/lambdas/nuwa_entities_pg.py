@@ -91,6 +91,7 @@ def _entity_api(row: dict[str, Any], *, report_count: int | None = None) -> dict
         "category": row.get("category"),
         "rfc": row.get("rfc"),
         "curp": row.get("curp"),
+        "otherIds": row.get("other_ids") if isinstance(row.get("other_ids"), list) else [],
         "country": row.get("country"),
         "riskLevel": row.get("risk_level"),
         "status": row.get("status"),
@@ -195,6 +196,31 @@ def entities_match_pg(body: dict[str, Any]) -> dict[str, Any]:
     return {"matches": matches, "hasStrongMatch": has_strong_match(matches)}
 
 
+OTHER_ID_TYPES = ("cedula", "passport", "national_id", "tax_id", "other")
+MAX_OTHER_IDS = 5
+
+
+def normalize_other_ids(raw: Any) -> list[dict[str, str]]:
+    """'Otro identificador' (foreign IDs for the early-warning match): [{type, value}], value upper alnum."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        id_type = str(item.get("type") or "other").strip().lower()
+        if id_type not in OTHER_ID_TYPES:
+            id_type = "other"
+        value = normalize_identifier(str(item.get("value") or ""))
+        value = "".join(c for c in (value or "").upper() if c.isalnum())
+        if len(value) < 4 or any(o["type"] == id_type and o["value"] == value for o in out):
+            continue
+        out.append({"type": id_type, "value": value[:40]})
+        if len(out) >= MAX_OTHER_IDS:
+            break
+    return out
+
+
 def _resolve_entity_fields(body: dict[str, Any]) -> dict[str, Any]:
     party_type = body.get("partyType")
     if party_type not in ("individual", "organization"):
@@ -238,6 +264,7 @@ def _resolve_entity_fields(body: dict[str, Any]) -> dict[str, Any]:
         "full_name": full_name or name,
         "rfc": normalize_identifier(rfc) or None,
         "curp": normalize_identifier(curp) or None,
+        "other_ids": normalize_other_ids(body.get("otherIds")),
         "country": (body.get("country") or None),
         "category": body.get("category") or "screening",
         "relationship_role": body.get("relationshipRole"),
@@ -263,9 +290,9 @@ def entities_create_pg(body: dict[str, Any]) -> dict[str, Any]:
     INSERT INTO public.entities (
       client_id, created_by_user_id, name, name_normalized, party_type, party_type_label,
       first_name, last_name, legal_name, full_name, category, rfc, curp, country,
-      relationship_role, parent_entity_id, metadata, status
+      relationship_role, parent_entity_id, metadata, other_ids, status
     ) VALUES (
-      %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'active'
+      %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'active'
     )
     RETURNING *
     """
@@ -287,6 +314,7 @@ def entities_create_pg(body: dict[str, Any]) -> dict[str, Any]:
         fields["relationship_role"],
         parent,
         Json(fields["metadata"]),
+        Json(fields["other_ids"]),
     ]
     try:
         with _conn() as conn:
@@ -482,6 +510,7 @@ def entities_update_pg(body: dict[str, Any]) -> dict[str, Any]:
         "fullName": body.get("fullName", row.get("full_name")),
         "rfc": body.get("rfc", row.get("rfc")),
         "curp": body.get("curp", row.get("curp")),
+        "otherIds": body.get("otherIds", row.get("other_ids")),
         "country": body.get("country", row.get("country")),
         "category": body.get("category", row.get("category")),
         "relationshipRole": body.get("relationshipRole", row.get("relationship_role")),
@@ -507,7 +536,7 @@ def entities_update_pg(body: dict[str, Any]) -> dict[str, Any]:
       first_name = %s, last_name = %s, legal_name = %s, full_name = %s,
       category = %s, rfc = %s, curp = %s, country = %s,
       relationship_role = %s, status = %s, risk_level = %s,
-      metadata = %s
+      metadata = %s, other_ids = %s
     WHERE id = %s::uuid AND client_id = %s
     RETURNING *
     """
@@ -529,6 +558,7 @@ def entities_update_pg(body: dict[str, Any]) -> dict[str, Any]:
         status,
         risk,
         Json(metadata),
+        Json(fields["other_ids"]),
         entity_id,
         client_id,
     ]
