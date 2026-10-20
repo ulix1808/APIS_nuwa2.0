@@ -484,6 +484,7 @@ def persist(conn: psycopg.Connection, run_id: int, matches: list[NewMatch], know
                     "clientId": entity["client_id"],
                     "entityId": entity_id,
                     "entityName": entity["name"],
+                    "partyType": entity["party_type"],
                     "severity": severity,
                     "title": title,
                     "matches": details,

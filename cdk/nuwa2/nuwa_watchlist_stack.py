@@ -153,7 +153,7 @@ class NuwaWatchlistStack(Stack):
         )
         integration = apigw.LambdaIntegration(api_fn, timeout=Duration.seconds(29), allow_test_invoke=False)
         wl = api.root.add_resource("v1").add_resource("watchlist")
-        for path in ("search", "changes", "runs", "sync", "match"):
+        for path in ("search", "changes", "runs", "status", "sync", "match"):
             wl.add_resource(path).add_method("POST", integration)
         wl.add_resource("entries").add_resource("get").add_method("POST", integration)
 

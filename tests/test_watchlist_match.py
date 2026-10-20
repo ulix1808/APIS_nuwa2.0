@@ -46,6 +46,8 @@ create table public.entity_relations (id bigserial primary key, client_id intege
   status text not null default 'active', related_name text not null, related_party_type text, related_aliases jsonb not null default '[]',
   relation_type text, created_at timestamptz not null default now());
 create table public.sources (id bigserial primary key, name text, risk_level smallint);
+create table public.nuwa_roles (id smallint primary key, slug text);
+create table public.nuwa_users (id bigserial primary key, client_id integer, role_id smallint, email text, is_active boolean);
 create table public.risk_entity_chunks (id uuid primary key default gen_random_uuid(), source_id bigint not null, chunk_text text not null,
   row_hash text, first_seen_at timestamptz, created_at timestamptz not null default now());
 """
@@ -58,6 +60,11 @@ def conn():
     for name in MIGRATIONS:
         c.execute((ROOT / "supabase" / "migrations" / name).read_text())
     c.execute("insert into companies values (8, 'QA'), (9, 'Otro cliente')")
+    c.execute("insert into nuwa_roles values (1, 'super_admin'), (2, 'analyst')")
+    c.execute(
+        "insert into nuwa_users (client_id, role_id, email, is_active) values "
+        "(8, 2, 'QA@Nuwa.space', true), (8, 2, 'old@nuwa.space', false), (9, 2, 'ana@otro.mx', true), (1, 1, 'root@nuwa.space', true)"
+    )
     yield c
     c.close()
 
@@ -70,8 +77,8 @@ def _ofac_records():
 
 def _sync(conn, records):
     run_id = db.start_run(conn, "sync", "ofac", "manual")
-    db.apply_sync(conn, "ofac", records, run_id)
-    db.finish_run(conn, run_id, "ok")
+    counts = db.apply_sync(conn, "ofac", records, run_id)
+    db.finish_run(conn, run_id, "ok", counts=counts)
 
 
 def _entity(conn, client_id, name, party_type, rfc=None, curp=None, folio=None):
@@ -171,7 +178,13 @@ def test_first_run_alerts_once_per_entity_and_skips_what_the_report_shows(conn, 
     in_report = conn.execute("select status from watchlist_matches where entity_id = %s", (ids["imperial"],)).fetchone()
     assert in_report["status"] == "in_report"
     assert stats["alerts"] == 4 and stats["inReport"] == 1
-    assert sorted(p["clientId"] for p in sent) == [8, 9]  # one mail per client
+    # One mail per client, to its active users, with everything the BFF needs (it reads no table).
+    by_client = {p["clientId"]: p for p in sent}
+    assert sorted(by_client) == [8, 9]
+    assert by_client[8]["recipients"] == ["qa@nuwa.space"] and by_client[9]["recipients"] == ["ana@otro.mx"]
+    mail_alert = next(a for a in by_client[8]["alerts"] if a["entityName"] == "Green Agropacific")
+    assert mail_alert["partyType"] == "organization" and mail_alert["matches"][0]["recordName"].startswith("Green Agropacific")
+    assert stats["mails"] == {"8": 200, "9": 200}
 
 
 def test_second_run_repeats_nothing_and_new_things_are_matched(conn, monkeypatch):
@@ -251,3 +264,15 @@ def test_report_known_reads_opensanctions_and_sat_hits():
     assert "cisneros liliana tapia" in known.ofac_name_keys
     assert "otraempresa" not in known.ofac_name_keys
     assert known.sat_refs == {"62:FSE970213LF7"} and known.chunk_ids == {"c-1"}
+
+
+def test_status_for_the_admin_panel(conn, monkeypatch):
+    _setup_jalisco(conn)
+    _run(conn, monkeypatch)
+    st = db.status(conn)
+    assert st["entries"]["active"] == 10 and st["entries"]["organizations"] >= 3
+    assert st["lastSync"]["status"] == "ok" and st["lastMatch"]["status"] == "ok"
+    assert len(st["lastChanges"]) == 9  # the first sync added everything but the vessel is not listed
+    assert {c["clientId"] for c in st["alertsByClient"]} == {8, 9}
+    assert st["recentAlerts"][0]["title"]
+    assert db.super_admin_emails(conn) == ["root@nuwa.space"]

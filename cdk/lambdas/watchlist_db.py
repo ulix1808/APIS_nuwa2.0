@@ -282,3 +282,125 @@ def _run_to_api(r: dict[str, Any]) -> dict[str, Any]:
         "startedAt": _iso(r["started_at"]),
         "finishedAt": _iso(r["finished_at"]),
     }
+
+
+# --- recipients and status (the BFF does not read these tables: dev's BFF has its own database) ---------
+
+
+def client_user_emails(conn: psycopg.Connection, client_id: int) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT lower(email) AS email FROM public.nuwa_users
+         WHERE client_id = %s AND coalesce(is_active, true) AND email LIKE '%%@%%'
+         ORDER BY 1
+        """,
+        (client_id,),
+    ).fetchall()
+    return [r["email"] for r in rows]
+
+
+def super_admin_emails(conn: psycopg.Connection) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT lower(u.email) AS email FROM public.nuwa_users u
+          JOIN public.nuwa_roles r ON r.id = u.role_id
+         WHERE lower(r.slug) = 'super_admin' AND coalesce(u.is_active, true) AND u.email LIKE '%%@%%'
+         ORDER BY 1
+        """
+    ).fetchall()
+    return [r["email"] for r in rows]
+
+
+def status(conn: psycopg.Connection, *, alert_days: int = 7) -> dict[str, Any]:
+    """Panel Admin / super admin assistant: our OFAC copy, last runs, last delta with news, alerts."""
+    e = conn.execute(
+        """
+        SELECT count(*) FILTER (WHERE removed_at IS NULL) AS active,
+               count(*) FILTER (WHERE removed_at IS NULL AND party_type = 'individual') AS individuals,
+               count(*) FILTER (WHERE removed_at IS NULL AND party_type = 'organization') AS organizations,
+               (SELECT count(DISTINCT entry_id) FROM public.watchlist_entry_ids) AS with_ids
+          FROM public.watchlist_entries
+        """
+    ).fetchone()
+    runs = list_runs(conn, limit=20)
+    news = next(
+        (
+            r
+            for r in runs
+            if r["kind"] == "sync"
+            and r["status"] == "ok"
+            and any(int((r["counts"] or {}).get(k) or 0) > 0 for k in ("added", "changed", "removed", "restored"))
+        ),
+        None,
+    )
+    changes: list[dict[str, Any]] = []
+    if news:
+        changes = [
+            {
+                "change": r["change"],
+                "at": _iso(r["at"]),
+                "extId": r["ext_id"],
+                "name": r["name"],
+                "partyType": r["party_type"],
+                "programs": r["programs"] or [],
+                "designatedOn": _iso(r["designated_on"]),
+            }
+            for r in conn.execute(
+                """
+                SELECT c.change, c.at, e.ext_id, e.name, e.party_type, e.programs, e.designated_on
+                  FROM public.watchlist_entry_changes c JOIN public.watchlist_entries e ON e.id = c.entry_id
+                 WHERE c.run_id = %s AND e.party_type IN ('individual', 'organization')
+                 ORDER BY c.change, e.name LIMIT 50
+                """,
+                (news["runId"],),
+            ).fetchall()
+        ]
+    by_client = [
+        {"clientId": r["client_id"], "clientName": r["client_name"], "alerts": r["alerts"], "open": r["open"]}
+        for r in conn.execute(
+            """
+            SELECT a.client_id, coalesce(c.name, 'Cliente ' || a.client_id) AS client_name,
+                   count(*)::int AS alerts, count(*) FILTER (WHERE a.status = 'new')::int AS open
+              FROM public.entity_alerts a LEFT JOIN public.companies c ON c.client_id = a.client_id
+             WHERE a.alert_type = 'list_match' AND a.created_at > now() - interval '30 days'
+             GROUP BY 1, 2 ORDER BY 3 DESC
+            """
+        ).fetchall()
+    ]
+    recent = [
+        {
+            "clientId": r["client_id"],
+            "clientName": r["client_name"],
+            "entityName": r["entity_name"],
+            "severity": r["severity"],
+            "status": r["status"],
+            "title": r["title"],
+            "createdAt": _iso(r["created_at"]),
+        }
+        for r in conn.execute(
+            """
+            SELECT a.client_id, coalesce(c.name, 'Cliente ' || a.client_id) AS client_name, e.name AS entity_name,
+                   a.severity, a.status, a.title, a.created_at
+              FROM public.entity_alerts a
+              JOIN public.entities e ON e.id = a.entity_id
+              LEFT JOIN public.companies c ON c.client_id = a.client_id
+             WHERE a.alert_type = 'list_match' AND a.created_at > now() - make_interval(days => %s)
+             ORDER BY a.created_at DESC LIMIT 30
+            """,
+            (max(1, min(int(alert_days), 90)),),
+        ).fetchall()
+    ]
+    return {
+        "entries": {
+            "active": int(e["active"] or 0),
+            "individuals": int(e["individuals"] or 0),
+            "organizations": int(e["organizations"] or 0),
+            "withIds": int(e["with_ids"] or 0),
+        },
+        "lastSync": next((r for r in runs if r["kind"] == "sync"), None),
+        "lastMatch": next((r for r in runs if r["kind"] == "match"), None),
+        "runs": runs,
+        "lastChanges": changes,
+        "alertsByClient": by_client,
+        "recentAlerts": recent,
+    }

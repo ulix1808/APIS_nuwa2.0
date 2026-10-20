@@ -49,13 +49,15 @@ def _download(name: str) -> dict[str, Any]:
     return {"path": path, "sha256": digest.hexdigest(), "bytes": size, "lastModified": last_modified}
 
 
-def _notify_failure(message: str) -> None:
+def _notify_failure(message: str, recipients: list[str]) -> None:
     base = (os.environ.get("MONITORING_BFF_URL") or "").rstrip("/")
     secret = os.environ.get("MONITORING_WORKER_SECRET") or ""
     if not base or not secret:
         log_phase("watchlist_sync", "notify skipped: no BFF url/secret")
         return
-    body = json.dumps({"event": "sync_failed", "listCode": LIST_CODE, "message": message[:1500]}).encode("utf-8")
+    body = json.dumps(
+        {"event": "sync_failed", "listCode": LIST_CODE, "message": message[:1500], "recipients": recipients}
+    ).encode("utf-8")
     req = urllib.request.Request(
         f"{base}/api/internal/watchlist-alert",
         data=body,
@@ -106,10 +108,13 @@ def run_sync(*, force: bool = False, trigger: str = "schedule") -> dict[str, Any
     except Exception as e:  # noqa: BLE001
         message = f"{type(e).__name__}: {e}"
         log_phase("watchlist_sync", f"run {run_id} failed: {message}")
+        recipients: list[str] = []
         try:
             db.finish_run(conn, run_id, "failed", files=files, error=message)
-        finally:
-            _notify_failure(message)
+            recipients = db.super_admin_emails(conn)
+        except Exception as e2:  # noqa: BLE001 — the run row and the mail must not fail on each other
+            log_phase("watchlist_sync", f"run {run_id} failure bookkeeping: {e2}")
+        _notify_failure(message, recipients)
         return {"ok": False, "runId": run_id, "status": "failed", "error": message}
     finally:
         for name in ofac.OFAC_FILES:

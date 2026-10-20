@@ -6,6 +6,7 @@ POST /v1/watchlist/search        {name, partyType: individual|organization|unkno
 POST /v1/watchlist/entries/get   {extId, listCode?: 'ofac'} → one record with documents, relations and history
 POST /v1/watchlist/changes       {runId? | since?, change?, limit?} → delta of the syncs (super admin)
 POST /v1/watchlist/runs          {kind?: sync|match, limit?} → last runs (super admin)
+POST /v1/watchlist/status        {alertDays?} → OFAC copy, last runs, last delta with news, alerts (super admin)
 POST /v1/watchlist/sync          {force?} → starts a sync now, asynchronous (super admin)
 POST /v1/watchlist/match         {full?, clientIds?, notify?} → starts a match now, asynchronous (super admin)
 """
@@ -222,6 +223,8 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 return handle_get(conn, body)
             if path.endswith("/watchlist/changes"):
                 return handle_changes(conn, body)
+            if path.endswith("/watchlist/status"):
+                return _resp(200, {"success": True, **db.status(conn, alert_days=_limit(body.get("alertDays"), 7, 90))})
             if path.endswith("/watchlist/runs"):
                 kind = body.get("kind") if body.get("kind") in ("sync", "match") else None
                 return _resp(200, {"success": True, "runs": db.list_runs(conn, kind=kind, limit=_limit(body.get("limit"), 30, 200))})
