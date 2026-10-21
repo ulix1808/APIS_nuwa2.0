@@ -10,6 +10,7 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
+import random
 import re
 import time
 import unicodedata
@@ -200,7 +201,25 @@ class SerperUpstreamError(Exception):
         self.status = status
 
 
-def _serper_post(api_key: str, q: str, gl: str, hl: str, num: int) -> list[dict[str, Any]]:
+SERPER_ATTEMPTS = 4
+
+
+def serper_retryable(status: int | None) -> bool:
+    """Serper rejects bursts with 429 and fails now and then with 5xx: retry those, never 4xx."""
+    return status is None or status == 429 or status >= 500
+
+
+def serper_retry_delay_sec(attempt: int, retry_after: str | None, rand=random.random) -> float:
+    """Retry-After if Serper sent one, else 0.5 s, 1.5 s, 3.5 s plus jitter."""
+    try:
+        if retry_after is not None and float(retry_after) >= 0:
+            return min(10.0, float(retry_after))
+    except ValueError:
+        pass
+    return (0.5, 1.5, 3.5)[min(attempt, 3) - 1] + rand() * 0.25
+
+
+def _serper_post_once(api_key: str, q: str, gl: str, hl: str, num: int) -> list[dict[str, Any]]:
     payload = json.dumps({"q": q, "gl": gl, "hl": hl, "num": num}).encode("utf-8")
     req = Request(
         SERPER_URL,
@@ -208,15 +227,29 @@ def _serper_post(api_key: str, q: str, gl: str, hl: str, num: int) -> list[dict[
         headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urlopen(req, timeout=45) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except HTTPError as ex:
-        raise SerperUpstreamError(str(ex), status=int(ex.code or 0) or None) from ex
-    except URLError as ex:
-        raise SerperUpstreamError(str(ex.reason or ex), status=None) from ex
+    with urlopen(req, timeout=45) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
     organic = data.get("organic") or []
     return organic if isinstance(organic, list) else []
+
+
+def _serper_post(api_key: str, q: str, gl: str, hl: str, num: int, sleep=time.sleep) -> list[dict[str, Any]]:
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return _serper_post_once(api_key, q, gl, hl, num)
+        except HTTPError as ex:
+            status = int(ex.code or 0) or None
+            retry_after = ex.headers.get("Retry-After") if ex.headers else None
+            err = SerperUpstreamError(str(ex), status=status)
+        except (URLError, TimeoutError, OSError) as ex:
+            status, retry_after = None, None
+            reason = getattr(ex, "reason", None) or ex
+            err = SerperUpstreamError(str(reason), status=None)
+        if attempt >= SERPER_ATTEMPTS or not serper_retryable(status):
+            raise err
+        sleep(serper_retry_delay_sec(attempt, retry_after))
 
 
 def html_to_text(html: str) -> str:

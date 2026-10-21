@@ -45,3 +45,13 @@ def test_a_503_still_means_the_app_answered(monkeypatch):
     monkeypatch.setattr(canary.urllib.request, "urlopen", boom)
     up, body = canary.fetch_health("https://app.nuwa.space/v2/api/health/deps", "s")
     assert up is True and body["deps"]["ocr"]["ok"] is False
+
+
+def test_serper_account_becomes_balance_and_rate_limit_metrics():
+    from handler_ops_canary import metrics_from_serper, serper_key_from_secret
+
+    m = {x["MetricName"]: x["Value"] for x in metrics_from_serper("prod", {"balance": 28600, "rateLimit": 50})}
+    assert m == {"SerperBalance": 28600.0, "SerperRateLimit": 50.0}
+    assert metrics_from_serper("prod", None) == []
+    assert serper_key_from_secret('{"api_key": " k1 "}') == "k1"
+    assert serper_key_from_secret("k2\n") == "k2"

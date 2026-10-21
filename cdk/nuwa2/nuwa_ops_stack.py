@@ -24,6 +24,7 @@ from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sns as sns
+from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_sns_subscriptions as subs
 from constructs import Construct
 
@@ -54,6 +55,7 @@ class NuwaOpsStack(Stack):
         dependencies: list[str],
         expect_screening_worker: bool,
         rds_instance_id: str = "",
+        serper_min_balance: int = 5000,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -67,6 +69,10 @@ class NuwaOpsStack(Stack):
         action = cw_actions.SnsAction(topic)
 
         monitoring_secret_name = f"{TAG_VALUE_PROJECT}/{secrets_environment_name}/monitoring-worker"
+        # Same secret the Serper Lambda uses (NuwaApiStack); the canary only calls GET /account (no credits).
+        serper_secret = secretsmanager.Secret.from_secret_name_v2(
+            self, "SerperSecret", f"{TAG_VALUE_PROJECT}/{secrets_environment_name}/serper"
+        )
         canary = lambda_.Function(
             self,
             "OpsCanaryLambda",
@@ -80,6 +86,7 @@ class NuwaOpsStack(Stack):
                 "OPS_ENV": env,
                 "OPS_HEALTH_URL": f"{bff_url.rstrip('/')}/api/health/deps",
                 "MONITORING_WORKER_SECRET": SecretValue.secrets_manager(monitoring_secret_name).unsafe_unwrap(),
+                "NUWA_SERPER_SECRET_ARN": serper_secret.secret_arn,
             },
             log_retention=logs.RetentionDays.TWO_WEEKS,
             retry_attempts=0,
@@ -91,6 +98,7 @@ class NuwaOpsStack(Stack):
                 conditions={"StringEquals": {"cloudwatch:namespace": NAMESPACE}},
             )
         )
+        serper_secret.grant_read(canary)
         rule = events.Rule(
             self,
             "OpsCanarySchedule",
@@ -167,6 +175,12 @@ class NuwaOpsStack(Stack):
                 cw.Metric(namespace="AWS/RDS", metric_name="FreeStorageSpace", dimensions_map=rds_dim, statistic="Minimum", period=period),
                 5 * 1024**3, lt, 1, f"RDS {rds_instance_id}: menos de 5 GB libres.",
             )
+        alarm(
+            "SerperBalanceLow", "serper-balance-low",
+            cw.Metric(namespace=NAMESPACE, metric_name="SerperBalance", dimensions_map=dim_env, statistic="Minimum", period=Duration.hours(1)),
+            serper_min_balance, lt, 1,
+            f"Serper {env}: quedan menos de {serper_min_balance} créditos (cada screening usa 28–84). Recargar en serper.dev.",
+        )
         for fn in ("sync", "match"):
             fname = f"{nuwa_name_prefix(environment_name=env, aws_region='us-east-1')}-watchlist-{fn}"
             alarm(

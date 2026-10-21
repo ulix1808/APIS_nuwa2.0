@@ -206,3 +206,59 @@ def test_keywords_cover_criminal_complaints_and_cap_is_60():
     for k in ("falsedad", "falsificación", "denuncia", "denunciado", "querella", "acusados"):
         assert k in ADVERSE_KEYWORDS_ES
     assert MAX_SERPER_HITS == 60
+
+
+def _http_error(code: int, retry_after: str | None = None):
+    from email.message import Message
+    from urllib.error import HTTPError
+
+    headers = Message()
+    if retry_after is not None:
+        headers["Retry-After"] = retry_after
+    return HTTPError("https://google.serper.dev/search", code, "x", headers, None)
+
+
+def test_serper_retries_429_and_5xx_then_succeeds(monkeypatch):
+    import nuwa_serper_search as ns
+
+    calls = []
+    outcomes = [_http_error(429, "1"), _http_error(503), [{"title": "ok"}]]
+
+    def once(*_a):
+        calls.append(1)
+        out = outcomes.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return out
+
+    sleeps = []
+    monkeypatch.setattr(ns, "_serper_post_once", once)
+    assert ns._serper_post("k", "q", "mx", "es", 10, sleep=sleeps.append) == [{"title": "ok"}]
+    assert len(calls) == 3
+    assert sleeps[0] == 1.0  # Retry-After from Serper
+    assert 1.5 <= sleeps[1] < 1.75  # second backoff step
+
+
+def test_serper_does_not_retry_4xx_and_gives_up_after_4(monkeypatch):
+    import nuwa_serper_search as ns
+
+    monkeypatch.setattr(ns, "_serper_post_once", lambda *_a: (_ for _ in ()).throw(_http_error(403)))
+    try:
+        ns._serper_post("k", "q", "mx", "es", 10, sleep=lambda _s: None)
+        raise AssertionError("expected SerperUpstreamError")
+    except SerperUpstreamError as ex:
+        assert ex.status == 403
+
+    calls = []
+
+    def always_429(*_a):
+        calls.append(1)
+        raise _http_error(429)
+
+    monkeypatch.setattr(ns, "_serper_post_once", always_429)
+    try:
+        ns._serper_post("k", "q", "mx", "es", 10, sleep=lambda _s: None)
+        raise AssertionError("expected SerperUpstreamError")
+    except SerperUpstreamError as ex:
+        assert ex.status == 429
+    assert len(calls) == ns.SERPER_ATTEMPTS

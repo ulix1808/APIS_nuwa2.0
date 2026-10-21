@@ -141,6 +141,7 @@ if ops_environment:
         ],
         expect_screening_worker=str(app.node.try_get_context("opsExpectWorker") or "true").lower() in ("1", "true", "yes"),
         rds_instance_id=str(app.node.try_get_context("opsRdsInstance") or ("nuwa20" if _ops_prod else "")),
+        serper_min_balance=int(app.node.try_get_context("opsSerperMinBalance") or 5000),
         env=cdk.Environment(
             account=_cdk_account,
             region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),
