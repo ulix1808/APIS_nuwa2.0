@@ -19,6 +19,7 @@ from nuwa_admin_platform_pg import (
     admin_users_list_platform,
     admin_users_update_platform,
     clients_create,
+    clients_delete,
     clients_list,
     clients_update,
     parse_operating_countries,
@@ -212,6 +213,74 @@ def test_parse_operating_countries() -> None:
     assert parse_operating_countries([]) is None
     assert _countries_from_row({}) == ["mexico"]
     assert _countries_from_row({"operating_countries": "{mexico,guatemala}"}) == ["mexico", "guatemala"]
+
+
+def test_clients_delete_protects_platform_client() -> None:
+    with pytest.raises(SupabaseRestError) as exc:
+        clients_delete({"targetClientId": 1})
+    assert exc.value.status == 400
+    assert exc.value.body == "client_protected"
+
+
+class _DeleteConn:
+    """Responde según la consulta y anota lo que se ejecuta."""
+
+    def __init__(self, data_tables: set[str] = frozenset(), tokens_used: int = 0, exists: bool = True) -> None:
+        self.sql: list[str] = []
+        self.data_tables = data_tables
+        self.tokens_used = tokens_used
+        self.exists = exists
+        self.committed = False
+
+    def execute(self, sql: str, params: Any = None) -> mock.MagicMock:
+        self.sql.append(sql)
+        result = mock.MagicMock()
+        if "information_schema" in sql:
+            result.fetchall.return_value = [{"table_name": t} for t in params[0]]
+        elif "FROM companies" in sql and sql.startswith("SELECT"):
+            result.fetchone.return_value = {"?column?": 1} if self.exists else None
+        elif "tokens_used" in sql:
+            result.fetchone.return_value = {"tokens_used": self.tokens_used}
+        elif sql.startswith("SELECT 1 FROM"):
+            table = sql.split()[3]
+            result.fetchone.return_value = {"?column?": 1} if table in self.data_tables else None
+        return result
+
+    def commit(self) -> None:
+        self.committed = True
+
+
+def _delete_with(conn: _DeleteConn) -> dict[str, Any]:
+    @contextmanager
+    def _cm():
+        yield conn
+
+    with mock.patch("nuwa_admin_platform_pg._conn", side_effect=lambda: _cm()):
+        return clients_delete({"targetClientId": 9})
+
+
+def test_clients_delete_removes_empty_client_instead_of_suspending() -> None:
+    conn = _DeleteConn()
+    assert _delete_with(conn)["deleted"] is True
+    assert conn.committed
+    assert any(sql.startswith("DELETE FROM clients") for sql in conn.sql)
+    assert any(sql.startswith("DELETE FROM companies") for sql in conn.sql)
+    assert not any("suspended" in sql for sql in conn.sql)
+
+
+@pytest.mark.parametrize("conn", [_DeleteConn({"nuwa_users"}), _DeleteConn({"reports"}), _DeleteConn(tokens_used=3)])
+def test_clients_delete_refuses_client_with_data(conn: _DeleteConn) -> None:
+    with pytest.raises(SupabaseRestError) as exc:
+        _delete_with(conn)
+    assert exc.value.status == 409
+    assert not conn.committed
+    assert not any(sql.startswith("DELETE") for sql in conn.sql)
+
+
+def test_clients_delete_unknown_client() -> None:
+    with pytest.raises(SupabaseRestError) as exc:
+        _delete_with(_DeleteConn(exists=False))
+    assert exc.value.status == 404
 
 
 def test_clients_create_requires_name() -> None:

@@ -528,8 +528,48 @@ def clients_reactivate(body: dict[str, Any]) -> dict[str, Any]:
     return {"success": True}
 
 
+PLATFORM_CLIENT_ID = 1
+# Datos del cliente: si hay filas no se borra (para eso está Suspender).
+CLIENT_DATA_TABLES = ["nuwa_users", "reports", "entities", "documents"]
+# Filas que solo existen por la empresa y se van con ella.
+CLIENT_OWNED_TABLES = ["client_token_usage", "client_storage_profiles", "token_ledger"]
+
+
+def _tables_with_client_id(conn, tables: list[str]) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT table_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND column_name = 'client_id' AND table_name = ANY(%s)
+        """,
+        (tables,),
+    ).fetchall()
+    found = {row["table_name"] for row in rows}
+    return [table for table in tables if table in found]
+
+
 def clients_delete(body: dict[str, Any]) -> dict[str, Any]:
-    return clients_suspend(body)
+    target = int(body["targetClientId"])
+    if target == PLATFORM_CLIENT_ID:
+        raise SupabaseRestError(400, "client_protected")
+    with _conn() as conn:
+        if not conn.execute("SELECT 1 FROM companies WHERE client_id = %s", (target,)).fetchone():
+            raise SupabaseRestError(404, "client_not_found")
+        for table in _tables_with_client_id(conn, CLIENT_DATA_TABLES):
+            if conn.execute(f"SELECT 1 FROM {table} WHERE client_id = %s LIMIT 1", (target,)).fetchone():
+                raise SupabaseRestError(409, "client_has_data")
+        used = conn.execute("SELECT tokens_used FROM clients WHERE id = %s", (target,)).fetchone()
+        if used and int(used["tokens_used"] or 0) > 0:
+            raise SupabaseRestError(409, "client_has_data")
+        try:
+            for table in _tables_with_client_id(conn, CLIENT_OWNED_TABLES):
+                conn.execute(f"DELETE FROM {table} WHERE client_id = %s", (target,))
+            conn.execute("DELETE FROM clients WHERE id = %s", (target,))
+            conn.execute("DELETE FROM companies WHERE client_id = %s", (target,))
+        except psycopg.errors.ForeignKeyViolation as exc:
+            # Otra tabla aún apunta a la empresa; la transacción se revierte completa.
+            raise SupabaseRestError(409, "client_has_data") from exc
+        conn.commit()
+    return {"success": True, "deleted": True}
 
 
 def clients_reset_token_usage(body: dict[str, Any]) -> dict[str, Any]:
