@@ -315,7 +315,11 @@ class NuwaApiStack(Stack):
         )
         # SerperGoogSearch: salida a Internet (fuera de VPC). HTML enrich + Serper API.
         serper_secret_name = f"{TAG_VALUE_PROJECT}/{env}/serper"
-        reuse_serper_secret = bool(self.node.try_get_context("reuseSerperSecret"))
+        # reuseAllExternalSecrets (the prod deploy flag) also covers it: prod already has nuwa2/prod/serper.
+        reuse_serper_secret = any(
+            str(self.node.try_get_context(k) or "").lower() in ("1", "true", "yes")
+            for k in ("reuseSerperSecret", "reuseAllExternalSecrets")
+        )
         if reuse_serper_secret:
             serper_secret = secretsmanager.Secret.from_secret_name_v2(
                 self,
