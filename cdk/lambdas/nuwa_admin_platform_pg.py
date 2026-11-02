@@ -530,7 +530,21 @@ def clients_reactivate(body: dict[str, Any]) -> dict[str, Any]:
 
 PLATFORM_CLIENT_ID = 1
 # Datos del cliente: si hay filas no se borra (para eso está Suspender).
-CLIENT_DATA_TABLES = ["nuwa_users", "reports", "entities", "documents"]
+# Varias no tienen FK a companies: sin revisarlas aquí quedarían huérfanas.
+# nuwa_audit_events no está a propósito: la pista de auditoría sobrevive a la empresa y no impide borrarla.
+CLIENT_DATA_TABLES = [
+    "nuwa_users",
+    "reports",
+    "entities",
+    "documents",
+    "entity_relations",
+    "nuwa_escalations",
+    "risk_entity_chunks",
+    "risk_entity_chunks_backup_20261018",
+    "source_imports",
+    "sources",
+    "watchlist_matches",
+]
 # Filas que solo existen por la empresa y se van con ella.
 CLIENT_OWNED_TABLES = ["client_token_usage", "client_storage_profiles", "token_ledger"]
 
