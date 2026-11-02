@@ -393,9 +393,10 @@ def clients_get(body: dict[str, Any]) -> dict[str, Any]:
 
 def clients_create(body: dict[str, Any]) -> dict[str, Any]:
     name = str(body["name"]).strip()
-    rfc = str(body.get("rfc") or "").strip().upper()
-    if not name or not rfc:
-        raise SupabaseRestError(400, "name y rfc requeridos.")
+    # El RFC es opcional al crear (se captura después); NULL porque clients.rfc es UNIQUE.
+    rfc = str(body.get("rfc") or "").strip().upper() or None
+    if not name:
+        raise SupabaseRestError(400, "name requerido.")
     countries = _countries_from_body(body) or ["mexico"]
     legal_enabled = _legal_incidents_from_body(body)
     if legal_enabled is None:
@@ -485,7 +486,7 @@ def clients_update(body: dict[str, Any]) -> dict[str, Any]:
                 continue
             val = body[api_key]
             if api_key == "rfc" and isinstance(val, str):
-                val = val.upper()
+                val = val.strip().upper() or None
             sets.append(f"{col} = %s")
             vals.append(val)
         if sets:
