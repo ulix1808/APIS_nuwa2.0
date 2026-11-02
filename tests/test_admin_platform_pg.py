@@ -268,13 +268,37 @@ def test_clients_delete_removes_empty_client_instead_of_suspending() -> None:
     assert not any("suspended" in sql for sql in conn.sql)
 
 
-@pytest.mark.parametrize("conn", [_DeleteConn({"nuwa_users"}), _DeleteConn({"reports"}), _DeleteConn(tokens_used=3)])
+@pytest.mark.parametrize(
+    "conn",
+    [
+        *[
+            _DeleteConn({table})
+            for table in (
+                "nuwa_users",
+                "reports",
+                "entity_relations",
+                "nuwa_escalations",
+                "risk_entity_chunks",
+                "source_imports",
+                "sources",
+                "watchlist_matches",
+            )
+        ],
+        _DeleteConn(tokens_used=3),
+    ],
+)
 def test_clients_delete_refuses_client_with_data(conn: _DeleteConn) -> None:
     with pytest.raises(SupabaseRestError) as exc:
         _delete_with(conn)
     assert exc.value.status == 409
     assert not conn.committed
     assert not any(sql.startswith("DELETE") for sql in conn.sql)
+
+
+def test_clients_delete_keeps_the_audit_trail() -> None:
+    conn = _DeleteConn({"nuwa_audit_events"})
+    assert _delete_with(conn)["deleted"] is True
+    assert not any("nuwa_audit_events" in sql for sql in conn.sql)
 
 
 def test_clients_delete_unknown_client() -> None:
