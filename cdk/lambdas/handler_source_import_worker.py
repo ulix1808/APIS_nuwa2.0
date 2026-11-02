@@ -20,6 +20,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import time
 import traceback
 import urllib.error
@@ -42,11 +43,15 @@ def _bucket() -> str:
     return (os.environ.get("NUWA_DOCUMENTS_BUCKET") or "").strip()
 
 
-def _extra_columns(headers: list[str], mapping: dict[str, str]) -> list[str]:
-    """File columns the saved mapping does not mention at all (the source added a column)."""
+def _extra_columns(headers: list[str], mapping: dict[str, str], rows: list[dict[str, str]]) -> list[str]:
+    """File columns the saved mapping does not mention at all (the source added a column).
+
+    Trailing commas give unnamed, empty columns (columna_21…); those are not a new column."""
     known = {core.header_match_key(h) for h in mapping}
     out = []
     for h in headers:
+        if re.fullmatch(r"columna_\d+", h) and not any((r.get(h) or "").strip() for r in rows):
+            continue
         fixed = core.repair_text(h, "mac")  # the mapping was saved with repaired headers
         if core.header_match_key(h) not in known and core.header_match_key(fixed) not in known:
             out.append(h)
@@ -132,7 +137,7 @@ def run_import(import_id: str) -> dict[str, Any]:
             problems = []
             if built.unmatched_mapping:
                 problems.append("faltan columnas que la carga anterior usaba: " + ", ".join(built.unmatched_mapping))
-            extra = _extra_columns(headers, mapping)
+            extra = _extra_columns(headers, mapping, rows)
             if extra:
                 problems.append("el archivo trae columnas nuevas: " + ", ".join(extra))
             if built.lost_character_cells:

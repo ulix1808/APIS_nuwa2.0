@@ -127,8 +127,17 @@ def test_strict_import_spots_new_columns_against_the_saved_mapping():
 
     mapping = {"RFC": "id", "Nombre": "nombre", "Publicación DOF": "custom:Publicación DOF"}
     # Repaired / differently cased headers are the same column; "NUEVA" is not in the mapping.
-    assert w._extra_columns(["rfc", "NOMBRE", "PublicaciÛn DOF", "NUEVA"], mapping) == ["NUEVA"]
-    assert w._extra_columns(["RFC", "Nombre", "Publicación DOF"], mapping) == []
+    assert w._extra_columns(["rfc", "NOMBRE", "PublicaciÛn DOF", "NUEVA"], mapping, []) == ["NUEVA"]
+    assert w._extra_columns(["RFC", "Nombre", "Publicación DOF"], mapping, []) == []
+    # Trailing commas (SAT 69-B): unnamed empty columns are not new; an unnamed column with data is.
+    rows = [{"RFC": "AAA120730823", "columna_21": "", "columna_22": "x"}]
+    assert w._extra_columns(["RFC", "columna_21", "columna_22"], mapping, rows) == ["columna_22"]
+
+
+def test_decodes_windows_1252_files_with_pasted_utf8_letters_and_dos_e_acute():
+    # SAT CSD sin efectos: Windows-1252 with a few UTF-8 Ü / Í; Condonados 07-15: 0x90 (CP850 É).
+    raw = "Ñ,CÓDIGO\n".encode("cp1252") + "BILINGÜE,INGENIERÍA\n".encode("utf-8") + b"M\x90XICO\n"
+    assert core.decode_text_bytes(raw) == "Ñ,CÓDIGO\nBILINGÜE,INGENIERÍA\nMÉXICO\n"
 
 
 def test_repairs_u_umlaut_and_u_acute_misread_as_mac_roman():

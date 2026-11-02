@@ -67,7 +67,30 @@ def decode_text_bytes(b: bytes) -> str:
     try:
         return unicodedata.normalize("NFC", b.decode("utf-8"))
     except UnicodeDecodeError:
-        return unicodedata.normalize("NFC", b.decode("cp1252", errors="replace"))
+        return unicodedata.normalize("NFC", _decode_mixed_cp1252(b))
+
+
+# Two-byte UTF-8 letters (Ü, Í, ñ…) pasted into a Windows-1252 file, as SAT publishes some lists.
+_EMBEDDED_UTF8 = re.compile(rb"[\xc2-\xdf][\x80-\xbf]")
+# Bytes Windows-1252 leaves undefined; SAT files carry 0x90 from DOS (CP850) for É ("M\x90XICO").
+_CP1252_UNDEFINED = {0x81: "\ufffd", 0x8D: "\ufffd", 0x8F: "\ufffd", 0x90: "É", 0x9D: "\ufffd"}
+
+
+def _decode_mixed_cp1252(b: bytes) -> str:
+    out: list[str] = []
+    pos = 0
+    for m in _EMBEDDED_UTF8.finditer(b):
+        out.append(_cp1252(b[pos : m.start()]))
+        out.append(m.group().decode("utf-8"))
+        pos = m.end()
+    out.append(_cp1252(b[pos:]))
+    return "".join(out)
+
+
+def _cp1252(b: bytes) -> str:
+    if not any(c in _CP1252_UNDEFINED for c in b):
+        return b.decode("cp1252")
+    return "".join(_CP1252_UNDEFINED.get(c) or bytes([c]).decode("cp1252") for c in b)
 
 
 # --- reading ---------------------------------------------------------------------------------------
