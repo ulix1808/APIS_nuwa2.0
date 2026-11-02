@@ -214,6 +214,32 @@ def test_parse_operating_countries() -> None:
     assert _countries_from_row({"operating_countries": "{mexico,guatemala}"}) == ["mexico", "guatemala"]
 
 
+def test_clients_create_requires_name() -> None:
+    with pytest.raises(SupabaseRestError) as exc:
+        clients_create({"name": "  "})
+    assert exc.value.status == 400
+
+
+@mock.patch("nuwa_admin_platform_pg._conn")
+def test_clients_create_without_rfc_stores_null(mock_conn) -> None:
+    """Sin RFC se guarda NULL: '' chocaría con el UNIQUE de clients.rfc en la segunda empresa."""
+    seen: list[tuple[str, Any]] = []
+    conn = mock.MagicMock()
+    conn.__enter__.return_value = conn
+
+    def execute(sql: str, params: Any = None) -> mock.MagicMock:
+        seen.append((sql, params))
+        result = mock.MagicMock()
+        result.fetchone.return_value = {"id": 9, "name": "Trial", "rfc": None, "plan": "starter", "status": "active", "token_limit": 5, "tokens_used": 0}
+        return result
+
+    conn.execute.side_effect = execute
+    mock_conn.return_value = conn
+    clients_create({"name": "Trial", "plan": "starter", "tokenLimit": 5})
+    insert = next(params for sql, params in seen if "INSERT INTO clients" in sql)
+    assert insert[2] is None
+
+
 def test_clients_create_rejects_unknown_country() -> None:
     with pytest.raises(SupabaseRestError) as exc:
         clients_create({"name": "Sadah", "rfc": "SAD", "operatingCountries": ["peru"]})
