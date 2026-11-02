@@ -574,6 +574,8 @@ class NuwaApiStack(Stack):
         client_documents_bucket.grant_read_write(admin_fn)
         client_documents_bucket.grant_read_write(sources_fn)
         client_documents_bucket.grant_read(source_import_worker_fn)
+        # Automatic (monthly) imports download the file and save it under source-imports before applying it.
+        client_documents_bucket.grant_put(source_import_worker_fn, "clients/*/source-imports/*")
 
         sources_integration = apigw.LambdaIntegration(sources_fn, timeout=api_integration_timeout)
         chunks_integration = apigw.LambdaIntegration(chunks_fn, timeout=api_integration_timeout)
