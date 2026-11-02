@@ -97,7 +97,39 @@ def notify_bff(imp: dict[str, Any], *, status: str, message: str) -> None:
         log_phase("source_import", f"notify failed: {e}")
 
 
-def run_import(import_id: str) -> dict[str, Any]:
+def _deadline(context: Any) -> float:
+    """time.time() at which to stop long work: one minute before the Lambda times out."""
+    left_ms = context.get_remaining_time_in_millis() if context else 14 * 60 * 1000
+    return time.time() + left_ms / 1000 - 60
+
+
+def _continue_mark_seen(imp: dict[str, Any], ids: list[Any], context: Any) -> None:
+    """Leave the ids still to stamp in S3, next to the import's file, and invoke this worker for them."""
+    key = f"{imp['s3_key'].rsplit('/', 1)[0]}/seen-pending.txt"
+    boto3.client("s3").put_object(Bucket=_bucket(), Key=key, Body="\n".join(str(i) for i in ids).encode())
+    boto3.client("lambda").invoke(
+        FunctionName=_function_name(context),
+        InvocationType="Event",
+        Payload=json.dumps({"markSeen": str(imp["id"]), "idsKey": key}).encode("utf-8"),
+    )
+
+
+def run_mark_seen(import_id: str, ids_key: str, context: Any) -> dict[str, Any]:
+    obj = boto3.client("s3").get_object(Bucket=_bucket(), Key=ids_key)
+    ids = [line for line in obj["Body"].read().decode().splitlines() if line.strip()]
+    conn = db.connect(autocommit=True)
+    try:
+        done = db.mark_seen(conn, import_id, ids, deadline=_deadline(context))
+        imp = db.get_import(conn, import_id)
+    finally:
+        conn.close()
+    log_phase("source_import", f"{import_id} seen {done:,}/{len(ids):,}")
+    if done < len(ids) and imp is not None:
+        _continue_mark_seen(imp, ids[done:], context)
+    return {"ok": True, "seen": done, "pending": len(ids) - done}
+
+
+def run_import(import_id: str, context: Any = None) -> dict[str, Any]:
     status_conn = db.connect(autocommit=True)
     started = time.time()
     imp: dict[str, Any] | None = None
@@ -109,6 +141,7 @@ def run_import(import_id: str) -> dict[str, Any]:
     try:
         imp = db.claim_import(status_conn, import_id)
         if imp is None:
+            _fail_if_timed_out(status_conn, import_id)
             return {"ok": False, "error": "not queued (already taken or finished)"}
         cfg = imp["config"] or {}
         strict = bool(cfg.get("strict"))
@@ -148,6 +181,7 @@ def run_import(import_id: str) -> dict[str, Any]:
                     + ". Revise el archivo y cárguelo a mano con el mapeo correcto."
                 )
 
+        unchanged_ids: list[Any] = []
         # autocommit: apply_records' transaction() is then a real transaction that commits.
         conn = db.connect(autocommit=True)
         try:
@@ -180,7 +214,15 @@ def run_import(import_id: str) -> dict[str, Any]:
                 entity_type=str(cfg.get("entityType") or "company")[:200],
                 metadata_updates=meta_updates,
                 progress=lambda m: progress(m, rowsRead=len(rows)),
+                unchanged_out=unchanged_ids,
+                deadline=_deadline(context),
             )
+            if unchanged_ids:
+                progress(f"Marcando {len(unchanged_ids):,} registros sin cambio como vistos en esta carga")
+                seen = db.mark_seen(conn, import_id, unchanged_ids, deadline=_deadline(context))
+                if seen < len(unchanged_ids):
+                    _continue_mark_seen(imp, unchanged_ids[seen:], context)
+                    counts["seenPending"] = len(unchanged_ids) - seen
         finally:
             conn.close()
 
@@ -211,6 +253,22 @@ def run_import(import_id: str) -> dict[str, Any]:
         return {"ok": False, "error": msg}
     finally:
         status_conn.close()
+
+
+def _fail_if_timed_out(conn, import_id: str) -> None:
+    """A retry of an import still 'processing' after the Lambda's 15 minutes: that run timed out and its
+    transaction rolled back. Mark it failed (and mail, if automatic) instead of leaving it processing."""
+    imp = db.get_import(conn, import_id)
+    if imp is None or imp["status"] != "processing" or imp["started_at"] is None:
+        return
+    if dt.datetime.now(dt.timezone.utc) - imp["started_at"] < dt.timedelta(minutes=15):
+        return
+    last = ((imp.get("progress") or {}).get("message")) or "sin detalle"
+    msg = f"La carga se pasó de los 15 minutos del proceso y no se aplicó (último paso: {last})."
+    db.set_status(conn, import_id, "failed", error=msg, progress={"message": "Falló"})
+    log_phase("source_import", f"{import_id} failed: {msg}")
+    if (imp.get("config") or {}).get("auto"):
+        notify_bff(imp, status="failed", message=msg)
 
 
 def _download(url: str) -> bytes:
@@ -285,7 +343,8 @@ def auto_update_source(conn, src: dict[str, Any], context: Any) -> dict[str, Any
         "strict": True,
         "headerRowIndex": int(meta.get("headerRowIndex") or 0),
         "columnMapping": mapping,
-        "keyField": "",
+        # The key of the last manual load: another key makes the import re-key every row of the source.
+        "keyField": str(meta.get("recordKeyField") or ""),
         "riskLevel": int(src["risk_level"]),
         "downloadUrl": url,
         **({"scraper": scraper} if scraper else {}),
@@ -370,7 +429,9 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return run_auto_updates(context)
     if event.get("autoUpdateSource"):
         return run_auto_update_one(int(event["autoUpdateSource"]), context)
+    if event.get("markSeen"):
+        return run_mark_seen(str(event["markSeen"]), str(event["idsKey"]), context)
     import_id = str(event.get("importId") or "").strip()
     if not import_id:
         return {"ok": False, "error": "importId requerido"}
-    return run_import(import_id)
+    return run_import(import_id, context)

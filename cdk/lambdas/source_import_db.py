@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import time
 from typing import Any, Callable
 
 import psycopg
@@ -154,8 +155,13 @@ def apply_records(
     entity_type: str,
     metadata_updates: dict[str, str],
     progress: Callable[[str], None] = lambda _m: None,
+    unchanged_out: list[Any] | None = None,
+    deadline: float | None = None,
 ) -> dict[str, int]:
     """Writes the import in one transaction. Returns counts (inserted, updated, unchanged, removed…).
+
+    The ids of rows published again without changes go to unchanged_out; mark_seen() stamps them after
+    the commit (stamping 200k+ rows inside the transaction ran past the Lambda's 15 minutes).
 
     conn must be in autocommit mode: otherwise any earlier query opens a transaction, the block below
     becomes a savepoint and nothing is committed when the connection closes.
@@ -171,6 +177,10 @@ def apply_records(
 
     unchanged_ids: list[Any] = []
     now = dt.datetime.now(dt.timezone.utc)
+    if mode != "replace":
+        counts["keysAssigned"] = assign_keys(
+            conn, sid, key_field, recompute=prev_key_field != key_field, deadline=deadline, progress=progress
+        )
     with conn.transaction():
         # One import at a time per source.
         conn.execute("select id from public.sources where id=%s for update", (sid,))
@@ -203,7 +213,7 @@ def apply_records(
                 conn.execute(
                     "update public.risk_entity_chunks c set record_key=_keys.k, row_hash=_keys.h from _keys where c.id=_keys.id"
                 )
-                counts["keysAssigned"] = len(fills)
+                counts["keysAssigned"] += len(fills)
 
             # Several current rows with one key: the newest stays, the others become history.
             current: dict[str, dict[str, Any]] = {}
@@ -260,18 +270,6 @@ def apply_records(
                 )
             counts["updated"] = len(to_update)
 
-        if mode != "replace" and unchanged_ids:
-            # Published again without changes: one row, its last appearance moves to this upload.
-            progress(f"Marcando {len(unchanged_ids):,} registros sin cambio como vistos en esta carga")
-            conn.execute("create temp table _seen (id uuid primary key) on commit drop")
-            _copy(conn, "_seen", "id", ((i,) for i in unchanged_ids))
-            conn.execute(
-                """update public.risk_entity_chunks c
-                   set last_seen_at=now(), first_seen_at=coalesce(c.first_seen_at, c.created_at), last_import_id=%s
-                   from _seen where c.id=_seen.id""",
-                (import_id,),
-            )
-
         if to_insert:
             progress(f"Insertando {len(to_insert):,} registros nuevos")
             _copy(
@@ -293,4 +291,68 @@ def apply_records(
             (json.dumps(updates, ensure_ascii=False), sid),
         )
         counts["rowCount"] = int(total)
+    if unchanged_out is not None and mode != "replace":
+        unchanged_out.extend(unchanged_ids)
     return counts
+
+
+def assign_keys(
+    conn: psycopg.Connection,
+    sid: int,
+    key_field: str | None,
+    *,
+    recompute: bool,
+    deadline: float | None,
+    progress: Callable[[str], None],
+    batch: int = 20_000,
+) -> int:
+    """record_key / row_hash for rows that lack them (or were keyed by another field), committed in batches
+    before the import's transaction. They only derive from the stored text, so committing them early changes
+    nothing a screening sees, and a run that times out keeps what it did. Returns how many rows were keyed."""
+    rows = conn.execute(
+        "select id, chunk_text, record_key, row_hash from public.risk_entity_chunks where source_id=%s", (sid,)
+    ).fetchall()
+    fills = []
+    for r in rows:
+        if recompute or not r["record_key"] or not r["row_hash"]:
+            k, h = key_and_hash_of_stored(r["chunk_text"], key_field)
+            if (k, h) != (r["record_key"], r["row_hash"]):
+                fills.append((r["id"], k, h))
+    done = 0
+    while done < len(fills):
+        if deadline is not None and time.time() >= deadline:
+            raise TimeoutError(
+                f"Faltan llaves en {len(fills) - done:,} registros de la fuente; se guardaron {done:,}. "
+                "Vuelva a lanzar la carga: continúa donde se quedó."
+            )
+        progress(f"Asignando llave a registros existentes ({done:,} de {len(fills):,})")
+        part = fills[done : done + batch]
+        with conn.transaction():
+            conn.execute("create temp table _keys (id uuid primary key, k text, h text) on commit drop")
+            _copy(conn, "_keys", "id, k, h", part)
+            conn.execute(
+                "update public.risk_entity_chunks c set record_key=_keys.k, row_hash=_keys.h from _keys where c.id=_keys.id"
+            )
+        done += len(part)
+    return done
+
+
+def mark_seen(conn: psycopg.Connection, import_id: str, ids: list[Any], *, deadline: float, batch: int = 20_000) -> int:
+    """Published again without changes: the row's last appearance moves to this upload.
+
+    One transaction per batch, until the ids run out or time.time() reaches deadline. Returns how many
+    were stamped; the caller continues the rest in another invocation."""
+    done = 0
+    while done < len(ids) and time.time() < deadline:
+        part = ids[done : done + batch]
+        with conn.transaction():
+            conn.execute("create temp table _seen (id uuid primary key) on commit drop")
+            _copy(conn, "_seen", "id", ((i,) for i in part))
+            conn.execute(
+                """update public.risk_entity_chunks c
+                   set last_seen_at=now(), first_seen_at=coalesce(c.first_seen_at, c.created_at), last_import_id=%s
+                   from _seen where c.id=_seen.id""",
+                (import_id,),
+            )
+        done += len(part)
+    return done

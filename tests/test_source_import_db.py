@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import sys
 from pathlib import Path
 
@@ -86,10 +87,15 @@ def _apply(conn, source, mode, rows, key_field="id"):
     work = psycopg.connect(CONNINFO, row_factory=dict_row, autocommit=True)
     try:
         src = db.fetch_source(work, int(source["id"]))
-        return db.apply_records(
-            work, source=src, import_id=_import(conn, int(source["id"]), mode), mode=mode, records=built.records,
+        import_id = _import(conn, int(source["id"]), mode)
+        unchanged: list = []
+        counts = db.apply_records(
+            work, source=src, import_id=import_id, mode=mode, records=built.records,
             key_field=key_field, risk_level=3, visibility="public", entity_type="company", metadata_updates={},
+            unchanged_out=unchanged,
         )
+        db.mark_seen(work, import_id, unchanged, deadline=time.time() + 60)  # as the worker, after the commit
+        return counts
     finally:
         work.close()
 
@@ -200,3 +206,56 @@ def test_incremental_by_content_keeps_every_distinct_version_and_the_last_appear
     assert acme["last_seen_at"] > first[acme["chunk_text"]]["last_seen_at"]  # seen again in October
     b2_old = next(r for r in rows if json.loads(r["chunk_text"])["Monto"] == "10")
     assert b2_old["last_seen_at"] == first[b2_old["chunk_text"]]["last_seen_at"]  # last published in July
+
+
+def test_mark_seen_stops_at_the_deadline_and_continues_later(conn):
+    s = _source(conn)
+    sid = int(s["id"])
+    _apply(conn, s, "sync", [{"RFC": f"R{i}", "Nombre": "X", "Monto": str(i)} for i in range(5)])
+    ids = [r["id"] for r in conn.execute("select id from public.risk_entity_chunks where source_id=%s", (sid,))]
+    imp = _import(conn, sid, "incremental")
+    assert db.mark_seen(conn, imp, ids, deadline=time.time() - 1) == 0  # out of time: nothing, no error
+    assert db.mark_seen(conn, imp, ids[:2], deadline=time.time() + 60, batch=1) == 2
+    assert db.mark_seen(conn, imp, ids[2:], deadline=time.time() + 60, batch=2) == 3
+    n = conn.execute("select count(*) as n from public.risk_entity_chunks where last_import_id=%s", (imp,)).fetchone()["n"]
+    assert n == 5
+
+
+def test_keys_are_committed_before_the_import_and_survive_a_timeout(conn):
+    """Old rows without keys: a run that runs out of time keeps the keys it saved; the next run goes on."""
+    s = _source(conn)
+    sid = int(s["id"])
+    _load_old_style(conn, sid, [{"id": f"A{i}", "nombre": "X"} for i in range(5)])
+    with pytest.raises(TimeoutError):
+        db.assign_keys(conn, sid, "id", recompute=False, deadline=time.time() - 1, progress=lambda _m: None)
+    assert db.assign_keys(conn, sid, "id", recompute=False, deadline=None, progress=lambda _m: None, batch=2) == 5
+    keyed = conn.execute(
+        "select count(*) as n from public.risk_entity_chunks where source_id=%s and record_key is not null", (sid,)
+    ).fetchone()["n"]
+    assert keyed == 5
+    c = _apply(conn, s, "incremental", [{"RFC": "A0", "Nombre": "X"}])
+    assert c["keysAssigned"] == 0
+
+
+def test_a_retry_after_the_lambda_timeout_marks_the_import_failed(conn, monkeypatch):
+    import types
+
+    sys.modules.setdefault("boto3", types.ModuleType("boto3"))  # provided by the Lambda runtime
+    import handler_source_import_worker as w
+
+    sent = []
+    monkeypatch.setattr(w, "notify_bff", lambda imp, status, message: sent.append((status, message)))
+    s = _source(conn)
+    old, fresh = _import(conn, int(s["id"]), "incremental"), _import(conn, int(s["id"]), "incremental")
+    conn.execute(
+        """update public.source_imports set status='processing', config='{"auto": true}',
+           progress='{"message": "Asignando llave"}', started_at = now() - interval '16 minutes' where id=%s""",
+        (old,),
+    )
+    conn.execute("update public.source_imports set status='processing', started_at=now() where id=%s", (fresh,))
+    w._fail_if_timed_out(conn, old)
+    w._fail_if_timed_out(conn, fresh)
+    st = {r["id"]: r for r in conn.execute("select id::text, status, error from public.source_imports")}
+    assert st[old]["status"] == "failed" and "Asignando llave" in st[old]["error"]
+    assert st[fresh]["status"] == "processing"  # still within the 15 minutes: maybe running
+    assert [x[0] for x in sent] == ["failed"]
