@@ -101,6 +101,9 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             "/entities/monitoring/run-start",
             "/entities/monitoring/run-finish",
             "/entities/alerts/create",
+            # Nuwa Proveedores: the BFF creates the supplier entity when the expediente arrives
+            # (no user session at that moment); body carries clientId + userId of the HR user who invited.
+            "/entities/create",
         )
 
         if any(path.endswith(p) for p in worker_only_paths):
