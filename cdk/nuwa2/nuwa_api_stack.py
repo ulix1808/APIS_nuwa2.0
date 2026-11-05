@@ -49,6 +49,13 @@ class NuwaApiStack(Stack):
         region_token = self.region
         aws_region = "us-east-1" if Token.is_unresolved(region_token) else str(region_token)
         prefix = nuwa_name_prefix(environment_name=env, aws_region=aws_region)
+        # dev runs on a copy of prod data: scheduled monitoring/source updates would spend the same
+        # external credits twice and alert real clients. Off outside prod unless -c apiSchedules=true.
+        schedules_enabled = env == "prod" or str(self.node.try_get_context("apiSchedules") or "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
         url_param = ssm.StringParameter(
             self,
@@ -825,6 +832,7 @@ class NuwaApiStack(Stack):
             rule_name=f"{prefix}-monitoring-due-tick",
             description="Monitoreo continuo: due → BFF enqueue cada 2h (UTC)",
             schedule=events.Schedule.cron(minute="0", hour="*/2"),
+            enabled=schedules_enabled,
         ).add_target(targets.LambdaFunction(monitoring_tick_fn))
 
         # Monthly automatic source updates (sources with metadata.autoUpdate = "true"): the worker
@@ -853,6 +861,7 @@ class NuwaApiStack(Stack):
             rule_name=f"{prefix}-source-auto-update",
             description="Fuentes: actualización automática mensual (día 1, 09:00 UTC)",
             schedule=events.Schedule.cron(minute="0", hour="9", day="1", month="*", year="*"),
+            enabled=schedules_enabled,
         ).add_target(
             targets.LambdaFunction(
                 source_import_worker_fn,
