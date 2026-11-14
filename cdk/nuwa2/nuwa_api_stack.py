@@ -800,6 +800,12 @@ class NuwaApiStack(Stack):
             monitoring_worker_secret.secret_value.unsafe_unwrap(),
         )
         monitoring_worker_secret.grant_read(reports_fn)
+        # Proveedores BFF: linkExpedienteDocuments → /documents/presign|upload-complete|finalize
+        documents_fn.add_environment(
+            "MONITORING_WORKER_SECRET",
+            monitoring_worker_secret.secret_value.unsafe_unwrap(),
+        )
+        monitoring_worker_secret.grant_read(documents_fn)
 
         monitoring_bff_url = (
             self.node.try_get_context("monitoringBffUrl")
