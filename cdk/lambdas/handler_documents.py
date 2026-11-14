@@ -11,6 +11,7 @@ from nuwa_config import DatabaseConfigError, SupabaseConfigError, ensure_data_ba
 from nuwa_errors import SupabaseRestError
 from nuwa_http import CORS_HEADERS
 from nuwa_obs_log import log_handler_enter, log_phase
+from nuwa_monitoring_worker import monitoring_worker_claims, monitoring_worker_secret_ok
 
 
 def _resp(status: int, body: dict[str, Any]) -> dict[str, Any]:
@@ -49,6 +50,22 @@ def _auth(body: dict[str, Any], event: dict[str, Any]) -> dict[str, Any] | str:
     return claims
 
 
+def _auth_user_or_worker(
+    body: dict[str, Any],
+    event: dict[str, Any],
+    *,
+    require_client_id: bool = True,
+) -> dict[str, Any] | str:
+    if monitoring_worker_secret_ok(event):
+        if require_client_id:
+            try:
+                int(body["clientId"])
+            except (KeyError, TypeError, ValueError):
+                return "BAD_CLIENT"
+        return monitoring_worker_claims()
+    return _auth(body, event)
+
+
 def _require_pg() -> None:
     if not is_database_mode():
         raise SupabaseRestError(
@@ -76,10 +93,25 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     try:
         body = _body(event)
-        auth = _auth(body, event)
+
+        # Nuwa Proveedores: BFF/worker stores supplier docs on the HR client's Documentos
+        # (no user JWT); body carries clientId + userId of the HR user who invited.
+        worker_or_user_paths = (
+            "/documents/presign",
+            "/documents/upload-complete",
+            "/documents/finalize",
+        )
+
+        if any(path.endswith(p) for p in worker_or_user_paths):
+            auth = _auth_user_or_worker(body, event, require_client_id=True)
+        else:
+            auth = _auth(body, event)
+
         if auth == "FORBIDDEN_ACTOR":
             return _resp(403, {"code": "FORBIDDEN", "message": "clientId/userId no coinciden con JWT."})
-        if auth in ("BAD_CLIENT", "FORBIDDEN_CLIENT"):
+        if auth == "BAD_CLIENT":
+            return _resp(400, {"code": "BAD_REQUEST", "message": "clientId es requerido"})
+        if auth == "FORBIDDEN_CLIENT":
             return _resp(403, {"code": "FORBIDDEN", "message": "clientId no permitido."})
         if isinstance(auth, str):
             return _resp(401, {"code": "UNAUTHORIZED", "message": auth})
