@@ -7,6 +7,8 @@ POST /v1/siger/pending — companies to look up. Body { clientIds: [int], since?
   (reports before the container went live are never looked up), so the container can keep its own
   cursor (last reportCreatedAt seen) and ask only for what is newer.
   Returns the latest report of each: folio + createdByUserId (actor for the BFF save-report update).
+  Also companies already answered with partners whose latest report is not the one that got them
+  (attachOnly: true): a new screening of a known company gets its partners without paying again.
 POST /v1/siger/claim — before paying. Body { clientId, entityId, folio?, rfc?, searchName?,
   reuseFromId?, force? }. Reuses a lookup paid for any client (≤ SIGER_REUSE_DAYS, default 180) only
   when it is surely the same company: same RFC, or the same full legal name WITH its legal form.
@@ -23,6 +25,9 @@ POST /v1/siger/record — result of a claimed lookup. Body { clientId, entityId,
   status ok | no_match | multiple | error. Only over a 'running' claim. legalName/rfc are the company
   chosen in SIGER (with several results the container picks the one the report talks about).
 POST /v1/siger/get — the lookup of one company. Body { clientId, entityId }.
+POST /v1/siger/attach — the partners were written to a newer report of the company. Body { clientId,
+  entityId, folio }. pending returns attachOnly: true for those reports: take the partners from get (no
+  SIGER, no cost), save them to the report, then attach so the company leaves pending.
 
 One row per (client, entity) in siger_lookups: each lookup pays fees, so a company is never looked up
 twice once it got an answer (ok, no_match or multiple), and a 'running' claim is never retried here.
@@ -191,26 +196,30 @@ def handle_pending(body: dict[str, Any]) -> dict[str, Any]:
     with _conn() as conn:
         rows = conn.execute(
             """
-            SELECT * FROM (
+            SELECT x.*, s.status AS lookup_status, s.attempts AS lookup_attempts,
+                   (s.status = 'ok' AND jsonb_array_length(s.partners) > 0) AS attach_only
+              FROM (
               SELECT DISTINCT ON (e.id)
                      e.id AS entity_id, e.client_id, e.name, e.legal_name, e.rfc,
-                     r.folio, r.created_at AS report_created_at, r.created_by_user_id,
-                     s.status AS lookup_status, s.attempts AS lookup_attempts
+                     r.folio, r.created_at AS report_created_at, r.created_by_user_id
                 FROM public.reports r
                 JOIN public.entities e
                   ON e.client_id = r.client_id AND (e.id = r.entity_id OR e.last_report_folio = r.folio)
-                LEFT JOIN public.siger_lookups s ON s.client_id = e.client_id AND s.entity_id = e.id
                WHERE r.status = 'active'
                  AND r.created_at >= %s
                  AND (%s::timestamptz IS NULL OR r.created_at < %s::timestamptz)
                  AND r.client_id = ANY(%s::int[])
                  AND e.party_type = 'organization'
                  AND e.status <> ALL(%s::text[])
-                 AND (s.id IS NULL OR (s.status = 'error' AND s.attempts < %s))
                ORDER BY e.id, r.created_at DESC
             ) x
-            ORDER BY x.report_created_at
-            LIMIT %s
+            LEFT JOIN public.siger_lookups s ON s.client_id = x.client_id AND s.entity_id = x.entity_id
+             WHERE s.id IS NULL
+                OR (s.status = 'error' AND s.attempts < %s)
+                -- Already answered with partners: a newer report of the company still lacks them.
+                OR (s.status = 'ok' AND jsonb_array_length(s.partners) > 0 AND s.report_folio IS DISTINCT FROM x.folio)
+             ORDER BY x.report_created_at
+             LIMIT %s
             """,
             (since, until, until, client_ids, list(INACTIVE_ENTITY_STATUSES), MAX_ATTEMPTS, limit),
         ).fetchall()
@@ -232,6 +241,7 @@ def handle_pending(body: dict[str, Any]) -> dict[str, Any]:
                     "createdByUserId": r["created_by_user_id"],
                     "previousStatus": r.get("lookup_status"),
                     "attempts": r.get("lookup_attempts") or 0,
+                    "attachOnly": bool(r.get("attach_only")),
                 }
                 for r in rows
             ],
@@ -471,6 +481,29 @@ def handle_get(body: dict[str, Any]) -> dict[str, Any]:
     return _resp(200, {"success": True, "lookup": _row(row) if row else None})
 
 
+def handle_attach(body: dict[str, Any]) -> dict[str, Any]:
+    ids = _ids(body)
+    if isinstance(ids, dict):
+        return ids
+    client_id, entity_id = ids
+    folio = _text(body.get("folio"), 120)
+    if not folio:
+        return _resp(400, {"code": "BAD_REQUEST", "message": "folio requerido."})
+    with _conn() as conn:
+        row = conn.execute(
+            """
+            UPDATE public.siger_lookups SET report_folio = %s, updated_at = now()
+             WHERE client_id = %s AND entity_id = %s::uuid AND status = 'ok'
+            RETURNING *
+            """,
+            (folio, client_id, entity_id),
+        ).fetchone()
+        if not row:
+            return _resp(409, {"code": "NOT_ATTACHABLE", "message": "No hay una consulta 'ok' para esta entidad."})
+        conn.commit()
+    return _resp(200, {"success": True, "lookup": _row(row)})
+
+
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     log_handler_enter("siger", event, context)
     method = (event.get("httpMethod") or "POST").upper()
@@ -497,6 +530,8 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return handle_record(body)
         if method == "POST" and path.endswith("/siger/get"):
             return handle_get(body)
+        if method == "POST" and path.endswith("/siger/attach"):
+            return handle_attach(body)
         return _resp(404, {"code": "NOT_FOUND", "message": "Ruta no encontrada", "path": path})
     except Exception as e:
         return _resp(500, {"code": "INTERNAL", "message": "Error interno", "error": str(e)})

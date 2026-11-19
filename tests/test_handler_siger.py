@@ -254,3 +254,25 @@ def test_keys():
     assert mod.base_key("Gráficas Corona, S.A. de C.V.") == mod.base_key("Gráficas Corona") == "graficascorona"
     assert mod.base_key("Gráficas Corona J.E. S.A. de C.V.") == "graficascoronaje"
     assert mod.has_legal_form("Gráficas Corona S.A. de C.V.") and not mod.has_legal_form("Gráficas Corona")
+
+
+def test_pending_also_returns_known_companies_whose_new_report_lacks_partners(monkeypatch):
+    monkeypatch.setenv("SIGER_START_AT", "2026-11-18T06:00:00Z")
+    row = {"entity_id": "e1", "client_id": 1, "name": "Cadgrafics", "legal_name": None, "rfc": None, "folio": "F2",
+           "report_created_at": "t", "created_by_user_id": 5, "lookup_status": "ok", "lookup_attempts": 1, "attach_only": True}
+    conn = FakeConn([[row]])
+    mod = _load(conn)
+    status, body = _call(mod, "pending", {"clientIds": [1]})
+    assert body["companies"][0]["attachOnly"] is True and body["companies"][0]["folio"] == "F2"
+    assert "s.report_folio IS DISTINCT FROM x.folio" in conn.calls[0][0]
+
+
+def test_attach_moves_the_lookup_to_the_new_report():
+    conn = FakeConn([_lookup(status="ok", report_folio="F2")])
+    mod = _load(conn)
+    status, body = _call(mod, "attach", {"clientId": 8, "entityId": "e1", "folio": "F2"})
+    assert status == 200 and body["lookup"]["reportFolio"] == "F2"
+    assert conn.calls[0][1][0] == "F2"
+    mod = _load(FakeConn([None]))
+    status, _ = _call(mod, "attach", {"clientId": 8, "entityId": "e1", "folio": "F2"})
+    assert status == 409

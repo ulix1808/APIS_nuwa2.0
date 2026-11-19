@@ -724,7 +724,7 @@ class NuwaApiStack(Stack):
 
         # SIGER partners (nuwa-siger container, worker secret only): see handler_siger.py.
         # One {action} resource: four static paths would push the stack over CloudFormation's 500 cap.
-        # The handler matches the path suffix (/siger/pending|claim|record|get).
+        # The handler matches the path suffix (/siger/pending|claim|record|get|attach).
         siger = v1.add_resource("siger")
         siger.add_resource("{action}").add_method("POST", reports_integration, api_key_required=False)
 
