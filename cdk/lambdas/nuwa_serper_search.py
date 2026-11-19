@@ -472,14 +472,16 @@ def search_organic(
     # Preserve job order (name-only first across all variants)
     by_label = {(j["label"], j["gl"], j["hl"]): org for j, org in results}
     raw: list[dict[str, Any]] = []
-    for job in jobs:
-        for row in by_label.get((job["label"], job["gl"], job["hl"]), []):
+    for job_index, job in enumerate(jobs):
+        for position, row in enumerate(by_label.get((job["label"], job["gl"], job["hl"]), [])):
             raw.append(
                 {
                     "title": str(row.get("title") or "").strip(),
                     "link": str(row.get("link") or "").strip(),
                     "description": str(row.get("snippet") or "").strip(),
                     "querySource": job["querySource"],
+                    "jobIndex": job_index,
+                    "position": position,
                 }
             )
     hits = rank_hits(subject_list, raw)[:MAX_SERPER_HITS]
@@ -495,10 +497,25 @@ def search_organic(
     return hits, stats
 
 
+GOOGLE_REDIRECT = re.compile(r"^https?://(www\.)?google\.[a-z.]+/(goto|url)\b", re.I)
+
+
+def _dedupe_key(link: str, title: str) -> str:
+    """Google redirect wrappers carry a different token per query for the same page (Nov 2026):
+    the title is the only stable part, so one page does not take several of the 60 slots."""
+    if GOOGLE_REDIRECT.match(link):
+        t = re.sub(r"\s+", " ", title or "").strip().lower()
+        if t:
+            return "google-redirect:" + t
+    return link.lower()
+
+
 def rank_hits(subjects: list[str], raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Dedupe by URL and order before the cap:
-    1) hits of an adverse-keyword query whose title/snippet names the subject;
-    2) name-only hits; 3) the remaining keyword hits. Stable within each group.
+    1) hits of an adverse-keyword query whose title/snippet names the subject, taken by turns
+       (1st result of every query, then the 2nd…), so each keyword group gets its best hits in —
+       in query order a late group (e.g. "sanciones") never made the cap (Cadgrafics, ASF note);
+    2) name-only hits; 3) the remaining keyword hits. Stable within groups 2 and 3.
 
     A URL seen in several queries keeps a snippet that names the subject if any does
     (Google returns a different snippet per query); it counts as name_only if a
@@ -509,8 +526,9 @@ def rank_hits(subjects: list[str], raw: list[dict[str, Any]]) -> list[dict[str, 
         link = (r.get("link") or "").strip()
         if not link or not re.match(r"^https?://", link, re.I):
             continue
-        key = link.lower()
+        key = _dedupe_key(link, str(r.get("title") or ""))
         hit = {"title": r.get("title") or link, "link": link, "description": r.get("description") or ""}
+        turn = (int(r.get("position") or 0), int(r.get("jobIndex") or 0))
         names = hit_mentions_any_subject(subjects, hit)
         prev = by_key.get(key)
         if prev is None:
@@ -520,6 +538,7 @@ def rank_hits(subjects: list[str], raw: list[dict[str, Any]]) -> list[dict[str, 
                 "querySource": r.get("querySource") or "keyword",
                 "_kw": r.get("querySource") == "keyword",
                 "_names": names,
+                "_turn": turn if r.get("querySource") == "keyword" else (10**6, 10**6),
             }
             continue
         if r.get("querySource") == "keyword":
@@ -530,13 +549,16 @@ def rank_hits(subjects: list[str], raw: list[dict[str, Any]]) -> list[dict[str, 
             prev["_names"] = True
             prev["title"] = hit["title"]
             prev["description"] = hit["description"]
+        if r.get("querySource") == "keyword":
+            prev["_turn"] = min(prev["_turn"], turn)
 
     def tier(h: dict[str, Any]) -> int:
         if h["_kw"] and h["_names"]:
             return 0
         return 1 if h["querySource"] == "name_only" else 2
 
-    rows = sorted(by_key.values(), key=tier)  # sorted() is stable
+    # Group 1 by turns (position in its query, then query order); groups 2 and 3 keep their order.
+    rows = sorted(by_key.values(), key=lambda h: (tier(h), h["_turn"] if tier(h) == 0 else (0, 0)))
     return [{k: v for k, v in h.items() if not k.startswith("_")} for h in rows]
 
 
