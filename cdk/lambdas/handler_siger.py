@@ -25,6 +25,9 @@ POST /v1/siger/record — result of a claimed lookup. Body { clientId, entityId,
   status ok | no_match | multiple | error. Only over a 'running' claim. legalName/rfc are the company
   chosen in SIGER (with several results the container picks the one the report talks about).
 POST /v1/siger/get — the lookup of one company. Body { clientId, entityId }.
+POST /v1/siger/resolve — choose the company of a 'multiple' lookup without paying again: Body { clientId,
+  entityId, legalName, rfc?, fems?, partners, matchReason? ("report_context" or "manual") }. The partners
+  are the ones already obtained in the paid lookup; the lookup becomes 'ok' (save them to the report next).
 POST /v1/siger/attach — the partners were written to a newer report of the company. Body { clientId,
   entityId, folio }. pending returns attachOnly: true for those reports: take the partners from get (no
   SIGER, no cost), save them to the report, then attach so the company leaves pending.
@@ -481,6 +484,45 @@ def handle_get(body: dict[str, Any]) -> dict[str, Any]:
     return _resp(200, {"success": True, "lookup": _row(row) if row else None})
 
 
+def handle_resolve(body: dict[str, Any]) -> dict[str, Any]:
+    ids = _ids(body)
+    if isinstance(ids, dict):
+        return ids
+    client_id, entity_id = ids
+    legal_name = _text(body.get("legalName"), 300)
+    partners = _list(body.get("partners"), 200)
+    if not legal_name or not partners:
+        return _resp(400, {"code": "BAD_REQUEST", "message": "legalName y partners requeridos."})
+    reason = _text(body.get("matchReason"), 40) or "manual"
+    with _conn() as conn:
+        row = conn.execute(
+            """
+            UPDATE public.siger_lookups
+               SET status = 'ok', legal_name = %s, legal_key = %s, base_key = %s,
+                   rfc = COALESCE(%s, rfc), fems = %s, partners = %s, match_reason = %s,
+                   aliases = aliases || %s, updated_at = now()
+             WHERE client_id = %s AND entity_id = %s::uuid AND status = 'multiple'
+            RETURNING *
+            """,
+            (
+                legal_name,
+                legal_key(legal_name),
+                base_key(legal_name),
+                (_text(body.get("rfc"), 20) or "").upper() or None,
+                Json(_list(body.get("fems"))),
+                Json(partners),
+                reason,
+                Json(_aliases(body.get("aliases") or [])),
+                client_id,
+                entity_id,
+            ),
+        ).fetchone()
+        if not row:
+            return _resp(409, {"code": "NOT_MULTIPLE", "message": "Solo se resuelve una consulta en estado 'multiple'."})
+        conn.commit()
+    return _resp(200, {"success": True, "lookup": _row(row)})
+
+
 def handle_attach(body: dict[str, Any]) -> dict[str, Any]:
     ids = _ids(body)
     if isinstance(ids, dict):
@@ -530,6 +572,8 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return handle_record(body)
         if method == "POST" and path.endswith("/siger/get"):
             return handle_get(body)
+        if method == "POST" and path.endswith("/siger/resolve"):
+            return handle_resolve(body)
         if method == "POST" and path.endswith("/siger/attach"):
             return handle_attach(body)
         return _resp(404, {"code": "NOT_FOUND", "message": "Ruta no encontrada", "path": path})
