@@ -175,7 +175,6 @@ class NuwaApiStack(Stack):
             timeout=api_integration_timeout,
             memory_size=256,
             environment=lambda_env,
-            log_retention=logs.RetentionDays.TWO_WEEKS,
         )
 
         if rds_public_lambda_access_sg_id:
@@ -352,7 +351,6 @@ class NuwaApiStack(Stack):
                 "NUWA_APP_CRYPTO_SECRET_ARN": app_crypto_secret.secret_arn,
                 "NUWA_APP_CRYPTO_SECRET_NAME": app_crypto_name,
             },
-            log_retention=logs.RetentionDays.TWO_WEEKS,
         )
         serper_secret.grant_read(serper_fn)
         app_crypto_secret.grant_read(serper_fn)
@@ -718,9 +716,10 @@ class NuwaApiStack(Stack):
         relations.add_resource("sync").add_method("POST", reports_integration, api_key_required=False)
 
         # SIGER partners (nuwa-siger container, worker secret only): see handler_siger.py.
+        # One {action} resource: four static paths would push the stack over CloudFormation's 500 cap.
+        # The handler matches the path suffix (/siger/pending|claim|record|get).
         siger = v1.add_resource("siger")
-        for name in ("pending", "claim", "record", "get"):
-            siger.add_resource(name).add_method("POST", reports_integration, api_key_required=False)
+        siger.add_resource("{action}").add_method("POST", reports_integration, api_key_required=False)
 
         admin = v1.add_resource("admin")
         ac = admin.add_resource("companies")
@@ -824,7 +823,6 @@ class NuwaApiStack(Stack):
                 "MONITORING_WORKER_SECRET": monitoring_worker_secret.secret_value.unsafe_unwrap(),
                 "MONITORING_DUE_LIMIT": due_limit,
             },
-            log_retention=logs.RetentionDays.TWO_WEEKS,
         )
         monitoring_worker_secret.grant_read(monitoring_tick_fn)
 
