@@ -569,6 +569,10 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             import handler_relations
 
             return handler_relations.handler(event, context)
+        if "/siger/" in path:
+            import handler_siger
+
+            return handler_siger.handler(event, context)
         return _resp(404, {"message": "Ruta no encontrada", "method": method, "path": path})
     except SupabaseRestError as e:
         return _resp(

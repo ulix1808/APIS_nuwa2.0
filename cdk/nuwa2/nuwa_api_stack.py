@@ -724,6 +724,11 @@ class NuwaApiStack(Stack):
         relations.add_resource("query").add_method("POST", reports_integration, api_key_required=False)
         relations.add_resource("sync").add_method("POST", reports_integration, api_key_required=False)
 
+        # SIGER partners (nuwa-siger container, worker secret only): see handler_siger.py.
+        siger = v1.add_resource("siger")
+        for name in ("pending", "claim", "record", "get"):
+            siger.add_resource(name).add_method("POST", reports_integration, api_key_required=False)
+
         admin = v1.add_resource("admin")
         ac = admin.add_resource("companies")
         ac.add_resource("list").add_method("POST", admin_integration, api_key_required=False)
@@ -800,6 +805,11 @@ class NuwaApiStack(Stack):
             monitoring_worker_secret.secret_value.unsafe_unwrap(),
         )
         monitoring_worker_secret.grant_read(reports_fn)
+        # SIGER: reports created before the container went live are never looked up (paid lookups).
+        reports_fn.add_environment(
+            "SIGER_START_AT",
+            str(self.node.try_get_context("sigerStartAt") or "2026-11-18T06:00:00Z"),
+        )
         # Proveedores BFF: linkExpedienteDocuments → /documents/presign|upload-complete|finalize
         documents_fn.add_environment(
             "MONITORING_WORKER_SECRET",
