@@ -262,3 +262,25 @@ def test_serper_does_not_retry_4xx_and_gives_up_after_4(monkeypatch):
     except SerperUpstreamError as ex:
         assert ex.status == 429
     assert len(calls) == ns.SERPER_ATTEMPTS
+
+
+def test_rank_hits_takes_keyword_groups_by_turns_and_merges_google_redirects():
+    from nuwa_serper_search import rank_hits
+
+    s = ["Cadgrafics"]
+    raw = []
+    # 8 early keyword groups full of hits naming the subject, then the group with the ASF note at #1.
+    for job in range(8):
+        for pos in range(10):
+            raw.append({"title": f"Contrato {job}-{pos} Cadgrafics", "link": f"https://x.mx/{job}/{pos}",
+                        "description": "Cadgrafics S.A. de C.V.", "querySource": "keyword", "jobIndex": job, "position": pos})
+    raw.append({"title": "ASF revela daño patrimonial", "link": "https://contralinea.com.mx/asf",
+                "description": "sanciones a la empresa Cadgrafics", "querySource": "keyword", "jobIndex": 8, "position": 0})
+    out = rank_hits(s, raw)[:60]
+    assert any("contralinea" in h["link"] for h in out[:10])
+    # one page behind two google.com/goto tokens takes one slot
+    dup = rank_hits(s, [
+        {"title": "Contrato PMX Cadgrafics", "link": "https://www.google.com/goto?url=CAESAAA", "description": "Cadgrafics", "querySource": "keyword", "jobIndex": 0, "position": 0},
+        {"title": "Contrato PMX Cadgrafics", "link": "https://www.google.com/goto?url=CAESBBB", "description": "Cadgrafics", "querySource": "keyword", "jobIndex": 1, "position": 0},
+    ])
+    assert len(dup) == 1
