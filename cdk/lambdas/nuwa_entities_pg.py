@@ -994,7 +994,7 @@ def entities_alerts_create_pg(body: dict[str, Any]) -> dict[str, Any]:
     client_id = int(body["clientId"])
     entity_id = str(body["entityId"])
     alert_type = str(body.get("alertType") or body.get("type") or "")
-    if alert_type not in ("risk_change", "new_match", "new_media_mention", "status_change", "run_failed"):
+    if alert_type not in ("risk_change", "new_match", "new_media_mention", "status_change", "run_failed", "siger_candidates"):
         raise SupabaseRestError(400, "alertType inválido")
     severity = str(body.get("severity") or "medium")
     if severity not in ("low", "medium", "high"):
@@ -1051,6 +1051,9 @@ def entities_alerts_list_pg(body: dict[str, Any]) -> dict[str, Any]:
     if status_filter:
         where.append("a.status = %s")
         params.append(str(status_filter))
+    if body.get("alertType"):
+        where.append("a.alert_type = %s")
+        params.append(str(body["alertType"]))
     wsql = " AND ".join(where)
     sql = f"""
     SELECT a.*, e.name AS entity_name, e.party_type
