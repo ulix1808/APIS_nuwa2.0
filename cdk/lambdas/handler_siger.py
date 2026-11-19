@@ -500,7 +500,7 @@ def handle_resolve(body: dict[str, Any]) -> dict[str, Any]:
             UPDATE public.siger_lookups
                SET status = 'ok', legal_name = %s, legal_key = %s, base_key = %s,
                    rfc = COALESCE(%s, rfc), fems = %s, partners = %s, match_reason = %s,
-                   aliases = aliases || %s, updated_at = now()
+                   aliases = aliases || %s::jsonb, updated_at = now()
              WHERE client_id = %s AND entity_id = %s::uuid AND status = 'multiple'
             RETURNING *
             """,
