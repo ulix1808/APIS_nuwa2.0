@@ -7,14 +7,21 @@ POST /v1/siger/pending — companies to look up. Body { clientIds: [int], since?
   (reports before the container went live are never looked up), so the container can keep its own
   cursor (last reportCreatedAt seen) and ask only for what is newer.
   Returns the latest report of each: folio + createdByUserId (actor for the BFF save-report update).
-POST /v1/siger/claim — take a company before paying. Body { clientId, entityId, rfc?, queryName?, folio? }.
-  First reuses a lookup of the same company paid for any client (same RFC, or same legal name when the
-  answer was 'ok'), not older than SIGER_REUSE_DAYS (default 180): it is copied for this client with
-  cost 0 and {claimed: false, reused: true, lookup} comes back with its partners — write them to the
-  report, do not run SIGER. Otherwise {claimed: true} only when there was no lookup or the last one
-  failed with attempts left.
-POST /v1/siger/record — result of a claimed lookup. Body { clientId, entityId, status, fems?, partners?,
-  cost?, error?, folio? }; status ok | no_match | multiple | error. Only over a 'running' claim.
+POST /v1/siger/claim — before paying. Body { clientId, entityId, folio?, rfc?, searchName?,
+  reuseFromId?, force? }. Reuses a lookup paid for any client (≤ SIGER_REUSE_DAYS, default 180) only
+  when it is surely the same company: same RFC, or the same full legal name WITH its legal form.
+    {claimed: false, reused: true, lookup}  → copied for this client at cost 0: write lookup.partners
+                                               to the report, do not run SIGER.
+    {claimed: false, candidates: [...]}     → earlier lookups whose name matches without legal form
+                                               ("Gráficas Corona" → "Gráficas Corona J.E., S.A. de C.V."):
+                                               the container checks them against the report and calls
+                                               claim again with reuseFromId (same company) or force (pay).
+    {claimed: true}                          → run SIGER.
+    {claimed: false, lookup}                 → already answered or running: skip.
+POST /v1/siger/record — result of a claimed lookup. Body { clientId, entityId, status, rfc?, legalName?,
+  searchName?, aliases?, matchReason?, fems?, candidates?, partners?, cost?, error?, folio? };
+  status ok | no_match | multiple | error. Only over a 'running' claim. legalName/rfc are the company
+  chosen in SIGER (with several results the container picks the one the report talks about).
 POST /v1/siger/get — the lookup of one company. Body { clientId, entityId }.
 
 One row per (client, entity) in siger_lookups: each lookup pays fees, so a company is never looked up
@@ -41,7 +48,7 @@ from nuwa_pg_dispatch import _conn
 MAX_ATTEMPTS = 3
 FINAL_STATUSES = ("ok", "no_match", "multiple", "error")
 INACTIVE_ENTITY_STATUSES = ("deleted", "inactive")
-# Legal forms dropped from the name key: "Gráficas Corona, S.A. de C.V." == "GRAFICAS CORONA SA DE CV".
+# Legal forms dropped from the base key: "Gráficas Corona, S.A. de C.V." and "Gráficas Corona" share it.
 LEGAL_FORMS = re.compile(
     r"\b(s\s*a\s*p\s*i|s\s*a\s*b|s\s*a|s\s*de\s*r\s*l|s\s*r\s*l|s\s*c|s\s*p\s*r|a\s*c|de\s*c\s*v|de\s*r\s*l|c\s*v)\b"
 )
@@ -103,12 +110,25 @@ def _instant(value: Any) -> datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
-def name_key(name: Any) -> str | None:
+def _ascii(name: Any) -> str:
     s = unicodedata.normalize("NFD", str(name or "")).encode("ascii", "ignore").decode().lower()
-    s = re.sub(r"[^a-z0-9 ]+", " ", s)
-    s = LEGAL_FORMS.sub(" ", s)
-    s = re.sub(r"\s+", "", s)
+    return re.sub(r"[^a-z0-9 ]+", " ", s)
+
+
+def legal_key(name: Any) -> str | None:
+    """Full legal name, legal form kept: "Gráficas Corona J.E., S.A. de C.V." == "GRAFICAS CORONA JE SA DE CV"."""
+    s = re.sub(r"\s+", "", _ascii(name))
     return s or None
+
+
+def base_key(name: Any) -> str | None:
+    """Name without legal form: several companies can share it, so it only finds candidates."""
+    s = re.sub(r"\s+", "", LEGAL_FORMS.sub(" ", _ascii(name)))
+    return s or None
+
+
+def has_legal_form(name: Any) -> bool:
+    return legal_key(name) != base_key(name)
 
 
 def reuse_days() -> int:
@@ -120,19 +140,36 @@ def reuse_days() -> int:
 
 def _row(r: dict[str, Any]) -> dict[str, Any]:
     return {
+        "id": r.get("id"),
         "clientId": r["client_id"],
         "entityId": str(r["entity_id"]),
         "reportFolio": r.get("report_folio"),
+        "searchName": r.get("search_name"),
         "rfc": r.get("rfc"),
-        "queryName": r.get("query_name"),
+        "legalName": r.get("legal_name"),
+        "aliases": r.get("aliases") or [],
+        "matchReason": r.get("match_reason"),
         "status": r["status"],
         "attempts": r["attempts"],
         "fems": r.get("fems") or [],
+        "candidates": r.get("candidates") or [],
         "partners": r.get("partners") or [],
         "cost": float(r["cost"]) if r.get("cost") is not None else None,
         "error": r.get("error"),
         "reusedFrom": r.get("reused_from"),
         "createdAt": r.get("created_at"),
+        "updatedAt": r.get("updated_at"),
+    }
+
+
+def _candidate(r: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": r["id"],
+        "legalName": r.get("legal_name"),
+        "rfc": r.get("rfc"),
+        "aliases": r.get("aliases") or [],
+        "fems": r.get("fems") or [],
+        "partners": len(r.get("partners") or []),
         "updatedAt": r.get("updated_at"),
     }
 
@@ -210,11 +247,59 @@ def _ids(body: dict[str, Any]) -> tuple[int, str] | dict[str, Any]:
     return client_id, entity_id
 
 
+def _aliases(*names: Any) -> list[str]:
+    out: list[str] = []
+    for n in names:
+        for v in n if isinstance(n, list) else [n]:
+            t = _text(v, 300)
+            if t and t.lower() not in (a.lower() for a in out):
+                out.append(t)
+    return out[:20]
+
+
+def _copy(conn: Any, client_id: int, entity_id: str, source: dict[str, Any], folio: str | None, search_name: str | None):
+    """Copy of another client's lookup for this one (cost 0); only over no row or a failed one."""
+    return conn.execute(
+        """
+        INSERT INTO public.siger_lookups
+          (client_id, entity_id, report_folio, search_name, rfc, legal_name, legal_key, base_key, aliases,
+           match_reason, status, fems, candidates, partners, cost, reused_from)
+        VALUES (%s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, 'reused', %s, %s, %s, %s, 0, %s)
+        ON CONFLICT (client_id, entity_id) DO UPDATE
+           SET report_folio = COALESCE(EXCLUDED.report_folio, siger_lookups.report_folio),
+               search_name = COALESCE(EXCLUDED.search_name, siger_lookups.search_name),
+               rfc = EXCLUDED.rfc, legal_name = EXCLUDED.legal_name, legal_key = EXCLUDED.legal_key,
+               base_key = EXCLUDED.base_key, aliases = EXCLUDED.aliases, match_reason = 'reused',
+               status = EXCLUDED.status, fems = EXCLUDED.fems, candidates = EXCLUDED.candidates,
+               partners = EXCLUDED.partners, cost = 0, reused_from = EXCLUDED.reused_from, error = NULL,
+               updated_at = now()
+         WHERE siger_lookups.status = 'error'
+        RETURNING *
+        """,
+        (
+            client_id, entity_id, folio, search_name, source.get("rfc"), source.get("legal_name"),
+            source.get("legal_key"), source.get("base_key"), Json(_aliases(source.get("aliases") or [], search_name)),
+            source["status"], Json(source.get("fems") or []), Json(source.get("candidates") or []),
+            Json(source.get("partners") or []), source["id"],
+        ),
+    ).fetchone()
+
+
+def _remember_alias(conn: Any, source: dict[str, Any], search_name: str | None) -> None:
+    """The name this client searched also resolves to the source company next time."""
+    if search_name and search_name.lower() not in (str(a).lower() for a in (source.get("aliases") or [])):
+        conn.execute(
+            "UPDATE public.siger_lookups SET aliases = %s WHERE id = %s",
+            (Json(_aliases(source.get("aliases") or [], search_name)), source["id"]),
+        )
+
+
 def handle_claim(body: dict[str, Any]) -> dict[str, Any]:
     ids = _ids(body)
     if isinstance(ids, dict):
         return ids
     client_id, entity_id = ids
+    folio = _text(body.get("folio"), 120)
     with _conn() as conn:
         entity = conn.execute(
             "SELECT party_type, status, name, legal_name, rfc FROM public.entities WHERE id = %s::uuid AND client_id = %s",
@@ -225,72 +310,90 @@ def handle_claim(body: dict[str, Any]) -> dict[str, Any]:
         if entity["party_type"] != "organization":
             return _resp(400, {"code": "NOT_ORGANIZATION", "message": "SIGER solo aplica a personas morales."})
         rfc = (_text(body.get("rfc"), 20) or _text(entity.get("rfc"), 20) or "").upper() or None
-        query_name = _text(body.get("queryName"), 300) or _text(entity.get("legal_name"), 300) or _text(entity.get("name"), 300)
-        key = name_key(query_name)
+        search_name = (
+            _text(body.get("searchName") or body.get("queryName"), 300)
+            or _text(entity.get("legal_name"), 300)
+            or _text(entity.get("name"), 300)
+        )
         mine = conn.execute(
             "SELECT * FROM public.siger_lookups WHERE client_id = %s AND entity_id = %s::uuid",
             (client_id, entity_id),
         ).fetchone()
-        if mine is None or (mine["status"] == "error" and mine["attempts"] < MAX_ATTEMPTS):
+        open_slot = mine is None or (mine["status"] == "error" and mine["attempts"] < MAX_ATTEMPTS)
+        if not open_slot:
+            return _resp(200, {"success": True, "claimed": False, "lookup": _row(mine)})
+
+        days = reuse_days()
+        reuse_id = _int(body.get("reuseFromId"))
+        if reuse_id:
+            source = conn.execute(
+                """
+                SELECT * FROM public.siger_lookups
+                 WHERE id = %s AND reused_from IS NULL AND status IN ('ok', 'no_match')
+                   AND updated_at > now() - make_interval(days => %s)
+                """,
+                (reuse_id, days),
+            ).fetchone()
+            if not source:
+                return _resp(404, {"code": "REUSE_NOT_FOUND", "message": "reuseFromId no existe, no es reutilizable o venció."})
+        else:
+            # Sure matches only: same RFC, or the same full legal name with its legal form.
+            lkey = legal_key(search_name) if has_legal_form(search_name) else None
             source = conn.execute(
                 """
                 SELECT * FROM public.siger_lookups
                  WHERE reused_from IS NULL
                    AND NOT (client_id = %s AND entity_id = %s::uuid)
                    AND updated_at > now() - make_interval(days => %s)
-                   AND ((%s::text IS NOT NULL AND upper(rfc) = %s AND status IN ('ok', 'no_match', 'multiple'))
-                        OR (%s::text IS NOT NULL AND name_key = %s AND status = 'ok'))
+                   AND ((%s::text IS NOT NULL AND upper(rfc) = %s AND status IN ('ok', 'no_match'))
+                        OR (%s::text IS NOT NULL AND legal_key = %s AND status = 'ok'))
                  ORDER BY (%s::text IS NOT NULL AND upper(rfc) = %s) DESC, updated_at DESC
                  LIMIT 1
                 """,
-                (client_id, entity_id, reuse_days(), rfc, rfc, key, key, rfc, rfc),
+                (client_id, entity_id, days, rfc, rfc, lkey, lkey, rfc, rfc),
             ).fetchone()
-            if source:
-                row = conn.execute(
-                    """
-                    INSERT INTO public.siger_lookups
-                      (client_id, entity_id, report_folio, rfc, query_name, name_key, status, fems, partners, cost, reused_from)
-                    VALUES (%s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, 0, %s)
-                    ON CONFLICT (client_id, entity_id) DO UPDATE
-                       SET status = EXCLUDED.status, fems = EXCLUDED.fems, partners = EXCLUDED.partners, cost = 0,
-                           reused_from = EXCLUDED.reused_from, error = NULL,
-                           report_folio = COALESCE(EXCLUDED.report_folio, siger_lookups.report_folio),
-                           rfc = COALESCE(EXCLUDED.rfc, siger_lookups.rfc), name_key = EXCLUDED.name_key,
-                           query_name = COALESCE(EXCLUDED.query_name, siger_lookups.query_name), updated_at = now()
-                     WHERE siger_lookups.status = 'error'
-                    RETURNING *
-                    """,
-                    (
-                        client_id, entity_id, _text(body.get("folio"), 120), rfc, query_name, key,
-                        source["status"], Json(source.get("fems") or []), Json(source.get("partners") or []), source["id"],
-                    ),
-                ).fetchone()
-                if row:
-                    conn.commit()
-                    return _resp(200, {"success": True, "claimed": False, "reused": True, "lookup": _row(row)})
+        if source:
+            row = _copy(conn, client_id, entity_id, source, folio, search_name)
+            if row:
+                _remember_alias(conn, source, search_name)
+                conn.commit()
+                return _resp(200, {"success": True, "claimed": False, "reused": True, "lookup": _row(row)})
+
+        if not reuse_id and not body.get("force"):
+            # Same name without legal form (or a known alias): maybe the same company, maybe not.
+            bkey = base_key(search_name)
+            candidates = conn.execute(
+                """
+                SELECT * FROM public.siger_lookups
+                 WHERE reused_from IS NULL AND status = 'ok'
+                   AND NOT (client_id = %s AND entity_id = %s::uuid)
+                   AND updated_at > now() - make_interval(days => %s)
+                   AND (base_key = %s OR aliases @> to_jsonb(ARRAY[%s::text]))
+                 ORDER BY updated_at DESC
+                 LIMIT 10
+                """,
+                (client_id, entity_id, days, bkey, search_name),
+            ).fetchall() if bkey else []
+            if candidates:
+                return _resp(
+                    200,
+                    {"success": True, "claimed": False, "candidates": [_candidate(c) for c in candidates]},
+                )
+
         row = conn.execute(
             """
-            INSERT INTO public.siger_lookups (client_id, entity_id, report_folio, rfc, query_name, name_key, status)
-            VALUES (%s, %s::uuid, %s, %s, %s, %s, 'running')
+            INSERT INTO public.siger_lookups (client_id, entity_id, report_folio, search_name, rfc, status)
+            VALUES (%s, %s::uuid, %s, %s, %s, 'running')
             ON CONFLICT (client_id, entity_id) DO UPDATE
                SET status = 'running', attempts = siger_lookups.attempts + 1, error = NULL,
                    report_folio = COALESCE(EXCLUDED.report_folio, siger_lookups.report_folio),
+                   search_name = COALESCE(EXCLUDED.search_name, siger_lookups.search_name),
                    rfc = COALESCE(EXCLUDED.rfc, siger_lookups.rfc),
-                   query_name = COALESCE(EXCLUDED.query_name, siger_lookups.query_name),
-                   name_key = COALESCE(EXCLUDED.name_key, siger_lookups.name_key),
                    updated_at = now()
              WHERE siger_lookups.status = 'error' AND siger_lookups.attempts < %s
             RETURNING *
             """,
-            (
-                client_id,
-                entity_id,
-                _text(body.get("folio"), 120),
-                rfc,
-                query_name,
-                key,
-                MAX_ATTEMPTS,
-            ),
+            (client_id, entity_id, folio, search_name, rfc, MAX_ATTEMPTS),
         ).fetchone()
         if row:
             conn.commit()
@@ -315,18 +418,32 @@ def handle_record(body: dict[str, Any]) -> dict[str, Any]:
         cost = round(float(cost), 2) if cost is not None else None
     except (TypeError, ValueError):
         return _resp(400, {"code": "BAD_REQUEST", "message": "cost debe ser numérico."})
+    legal_name = _text(body.get("legalName"), 300)
+    search_name = _text(body.get("searchName"), 300)
     with _conn() as conn:
         row = conn.execute(
             """
             UPDATE public.siger_lookups
-               SET status = %s, fems = %s, partners = %s, cost = COALESCE(%s, cost), error = %s,
+               SET status = %s, rfc = COALESCE(%s, rfc), legal_name = COALESCE(%s, legal_name),
+                   legal_key = COALESCE(%s, legal_key), base_key = COALESCE(%s, base_key),
+                   search_name = COALESCE(%s, search_name),
+                   aliases = %s, match_reason = %s, fems = %s, candidates = %s, partners = %s,
+                   cost = COALESCE(%s, cost), error = %s,
                    report_folio = COALESCE(%s, report_folio), updated_at = now()
              WHERE client_id = %s AND entity_id = %s::uuid AND status = 'running'
             RETURNING *
             """,
             (
                 status,
+                (_text(body.get("rfc"), 20) or "").upper() or None,
+                legal_name,
+                legal_key(legal_name),
+                base_key(legal_name),
+                search_name,
+                Json(_aliases(body.get("aliases") or [], search_name)),
+                _text(body.get("matchReason"), 40),
                 Json(_list(body.get("fems"))),
+                Json(_list(body.get("candidates"), 20)),
                 Json(_list(body.get("partners"), 200)),
                 cost,
                 _text(body.get("error"), 1500) if status == "error" else None,
