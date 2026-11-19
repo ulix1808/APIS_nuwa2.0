@@ -147,23 +147,67 @@ def test_claim_rejects_individuals():
     assert status == 400 and body["code"] == "NOT_ORGANIZATION"
 
 
-def test_claim_reuses_another_clients_lookup_without_paying():
-    source = _lookup(id=40, client_id=3, entity_id="other", status="ok", partners=[{"name": "ANA"}], fems=["123"], cost=736)
+def test_claim_reuses_by_rfc_without_paying():
+    source = _lookup(id=40, client_id=3, entity_id="other", status="ok", partners=[{"name": "ANA"}], fems=["123"], cost=736, aliases=[])
     copied = _lookup(id=41, status="ok", partners=[{"name": "ANA"}], fems=["123"], cost=0, reused_from=40)
-    conn = FakeConn([ENTITY, None, source, copied])
+    conn = FakeConn([ENTITY, None, source, copied, None])
     mod = _load(conn)
     status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1", "folio": "F1"})
     assert status == 200
     assert body["claimed"] is False and body["reused"] is True
     assert body["lookup"]["reusedFrom"] == 40 and body["lookup"]["partners"] == [{"name": "ANA"}]
-    reuse_sql, reuse_params = conn.calls[2]
-    assert "upper(rfc) = %s" in reuse_sql and "GCO010101AAA" in reuse_params
-    assert "graficascorona" in reuse_params
+    sure_sql, sure_params = conn.calls[2]
+    assert "upper(rfc) = %s" in sure_sql and "GCO010101AAA" in sure_params
+    # a name without legal form is never a sure match
+    assert sure_params[5] is None
+    # the searched name is remembered as an alias of the source company
+    assert "SET aliases" in conn.calls[4][0]
     assert conn.commits == 1
 
 
+def test_claim_reuses_exact_legal_name_with_legal_form():
+    entity = {**ENTITY, "rfc": None, "legal_name": "Gráficas Corona J.E., S.A. de C.V."}
+    source = _lookup(id=40, client_id=3, entity_id="other", status="ok")
+    conn = FakeConn([entity, None, source, _lookup(id=41, status="ok", reused_from=40), None])
+    mod = _load(conn)
+    status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1"})
+    assert body["reused"] is True
+    assert conn.calls[2][1][5] == "graficascoronajesadecv"
+
+
+def test_claim_name_without_legal_form_returns_candidates_not_reuse():
+    entity = {**ENTITY, "rfc": None}
+    cand = _lookup(id=40, client_id=3, entity_id="other", status="ok", legal_name="Gráficas Corona J.E., S.A. de C.V.",
+                   aliases=["Gráficas Corona"], partners=[{"name": "ANA"}], fems=["123"])
+    conn = FakeConn([entity, None, None, [cand]])
+    mod = _load(conn)
+    status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1"})
+    assert body["claimed"] is False and "reused" not in body
+    assert body["candidates"][0]["id"] == 40 and body["candidates"][0]["partners"] == 1
+    assert "graficascorona" in conn.calls[3][1]
+    assert conn.commits == 0
+
+
+def test_claim_with_reuse_from_id_copies_the_chosen_candidate():
+    entity = {**ENTITY, "rfc": None}
+    source = _lookup(id=40, client_id=3, entity_id="other", status="ok", aliases=[])
+    conn = FakeConn([entity, None, source, _lookup(id=41, status="ok", reused_from=40), None])
+    mod = _load(conn)
+    status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1", "reuseFromId": 40})
+    assert body["reused"] is True and conn.calls[2][1][0] == 40
+
+
+def test_claim_force_pays_even_with_candidates():
+    entity = {**ENTITY, "rfc": None}
+    conn = FakeConn([entity, None, None, _lookup()])
+    mod = _load(conn)
+    status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1", "force": True})
+    assert body["claimed"] is True
+    assert not any("base_key = %s" in sql for sql, _ in conn.calls)
+
+
 def test_claim_takes_new_company():
-    conn = FakeConn([ENTITY, None, None, _lookup()])
+    conn = FakeConn([ENTITY, None, None, [], _lookup()])
     mod = _load(conn)
     status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1"})
     assert body["claimed"] is True and body["lookup"]["status"] == "running"
@@ -171,12 +215,25 @@ def test_claim_takes_new_company():
 
 def test_claim_never_repeats_an_answered_company():
     done = _lookup(status="ok")
-    conn = FakeConn([ENTITY, done, None, done])
+    conn = FakeConn([ENTITY, done])
     mod = _load(conn)
     status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1"})
     assert body["claimed"] is False and body.get("reused") is None
-    # no reuse lookup when this client already has an answer
-    assert not any("reused_from IS NULL" in sql for sql, _ in conn.calls)
+    assert len(conn.calls) == 2
+
+
+def test_record_stores_chosen_company_and_aliases():
+    conn = FakeConn([_lookup(status="ok")])
+    mod = _load(conn)
+    status, body = _call(mod, "record", {
+        "clientId": 8, "entityId": "e1", "status": "ok", "legalName": "Gráficas Corona J.E., S.A. de C.V.",
+        "rfc": "gcj0101", "searchName": "Gráficas Corona", "matchReason": "report_context",
+        "candidates": [{"fem": "1"}, {"fem": "2"}], "partners": [{"name": "ANA"}],
+    })
+    assert status == 200
+    params = conn.calls[0][1]
+    assert params[1] == "GCJ0101" and params[3] == "graficascoronajesadecv" and params[4] == "graficascoronaje"
+    assert getattr(params[6], "obj", params[6]) == ["Gráficas Corona"] and params[7] == "report_context"
 
 
 def test_record_needs_a_running_claim():
@@ -191,7 +248,9 @@ def test_record_rejects_unknown_status():
     assert status == 400
 
 
-def test_name_key_ignores_legal_form_and_accents():
+def test_keys():
     mod = _load(FakeConn([]))
-    assert mod.name_key("Gráficas Corona, S.A. de C.V.") == mod.name_key("GRAFICAS CORONA SA DE CV") == "graficascorona"
-    assert mod.name_key("Gráficas Corona J.E. S.A. de C.V.") != "graficascorona"
+    assert mod.legal_key("Gráficas Corona J.E., S.A. de C.V.") == mod.legal_key("GRAFICAS CORONA JE SA DE CV")
+    assert mod.base_key("Gráficas Corona, S.A. de C.V.") == mod.base_key("Gráficas Corona") == "graficascorona"
+    assert mod.base_key("Gráficas Corona J.E. S.A. de C.V.") == "graficascoronaje"
+    assert mod.has_legal_form("Gráficas Corona S.A. de C.V.") and not mod.has_legal_form("Gráficas Corona")
