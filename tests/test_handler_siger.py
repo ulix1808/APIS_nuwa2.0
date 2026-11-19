@@ -276,3 +276,16 @@ def test_attach_moves_the_lookup_to_the_new_report():
     mod = _load(FakeConn([None]))
     status, _ = _call(mod, "attach", {"clientId": 8, "entityId": "e1", "folio": "F2"})
     assert status == 409
+
+
+def test_resolve_turns_a_multiple_lookup_into_ok_without_paying():
+    conn = FakeConn([_lookup(status="ok", legal_name="GRAFICAS CORONA J.E.", partners=[{"name": "A"}, {"name": "B"}])])
+    mod = _load(conn)
+    status, body = _call(mod, "resolve", {"clientId": 1, "entityId": "e2", "legalName": "GRAFICAS CORONA J.E.",
+                                           "fems": ["289782"], "partners": [{"name": "A"}, {"name": "B"}], "matchReason": "report_context"})
+    assert status == 200 and body["lookup"]["status"] == "ok"
+    sql, params = conn.calls[0]
+    assert "status = 'multiple'" in sql and params[1] == "graficascoronaje" and params[6] == "report_context"
+    mod = _load(FakeConn([None]))
+    assert _call(mod, "resolve", {"clientId": 1, "entityId": "e2", "legalName": "X", "partners": [{"name": "A"}]})[0] == 409
+    assert _call(mod, "resolve", {"clientId": 1, "entityId": "e2", "legalName": "X", "partners": []})[0] == 400
