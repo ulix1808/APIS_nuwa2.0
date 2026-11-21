@@ -289,3 +289,54 @@ def test_resolve_turns_a_multiple_lookup_into_ok_without_paying():
     mod = _load(FakeConn([None]))
     assert _call(mod, "resolve", {"clientId": 1, "entityId": "e2", "legalName": "X", "partners": [{"name": "A"}]})[0] == 409
     assert _call(mod, "resolve", {"clientId": 1, "entityId": "e2", "legalName": "X", "partners": []})[0] == 400
+
+
+REP = {"name": "ANA", "personKind": "individual", "rfc": "BBBB000000XX0", "curp": "BBBB000000MDFXXX00", "role": "administrador unico"}
+
+
+def test_record_stores_the_legal_representatives_also_without_partners():
+    conn = FakeConn([_lookup(status="ok", representatives=[REP])])
+    mod = _load(conn)
+    status, body = _call(mod, "record", {"clientId": 8, "entityId": "e1", "status": "ok", "partners": [], "representatives": [REP]})
+    assert status == 200 and body["lookup"]["representatives"] == [REP]
+    sql, params = conn.calls[0]
+    assert "representatives = %s" in sql
+    assert getattr(params[-3], "obj", params[-3]) == [REP]
+
+
+def test_get_and_attach_return_the_representatives():
+    mod = _load(FakeConn([_lookup(status="ok", representatives=[REP])]))
+    assert _call(mod, "get", {"clientId": 8, "entityId": "e1"})[1]["lookup"]["representatives"] == [REP]
+    mod = _load(FakeConn([_lookup(status="ok", report_folio="F2", representatives=[REP])]))
+    assert _call(mod, "attach", {"clientId": 8, "entityId": "e1", "folio": "F2"})[1]["lookup"]["representatives"] == [REP]
+    # Lookups saved before the column existed come back with an empty list.
+    mod = _load(FakeConn([_lookup(status="ok")]))
+    assert _call(mod, "get", {"clientId": 8, "entityId": "e1"})[1]["lookup"]["representatives"] == []
+
+
+def test_claim_reuse_copies_the_representatives():
+    source = _lookup(id=40, client_id=3, entity_id="other", status="ok", partners=[], representatives=[REP], aliases=[])
+    copied = _lookup(id=41, status="ok", representatives=[REP], reused_from=40)
+    conn = FakeConn([ENTITY, None, source, copied, None])
+    mod = _load(conn)
+    status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1"})
+    assert body["reused"] is True and body["lookup"]["representatives"] == [REP]
+    copy_sql, copy_params = conn.calls[3]
+    assert "representatives = EXCLUDED.representatives" in copy_sql
+    assert [REP] in [getattr(p, "obj", p) for p in copy_params]
+
+
+def test_pending_attach_only_counts_representatives_too(monkeypatch):
+    monkeypatch.setenv("SIGER_START_AT", "2026-11-18T06:00:00Z")
+    conn = FakeConn([[]])
+    mod = _load(conn)
+    _call(mod, "pending", {"clientIds": [1]})
+    assert "jsonb_array_length(s.representatives) > 0" in conn.calls[0][0]
+
+
+def test_resolve_accepts_only_representatives():
+    conn = FakeConn([_lookup(status="ok", representatives=[REP])])
+    mod = _load(conn)
+    status, body = _call(mod, "resolve", {"clientId": 1, "entityId": "e2", "legalName": "X", "partners": [], "representatives": [REP]})
+    assert status == 200 and body["lookup"]["representatives"] == [REP]
+    assert getattr(conn.calls[0][1][-3], "obj", conn.calls[0][1][-3]) == [REP]

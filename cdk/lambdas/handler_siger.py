@@ -21,13 +21,16 @@ POST /v1/siger/claim — before paying. Body { clientId, entityId, folio?, rfc?,
     {claimed: true}                          → run SIGER.
     {claimed: false, lookup}                 → already answered or running: skip.
 POST /v1/siger/record — result of a claimed lookup. Body { clientId, entityId, status, rfc?, legalName?,
-  searchName?, aliases?, matchReason?, fems?, candidates?, partners?, cost?, error?, folio? };
-  status ok | no_match | multiple | error. Only over a 'running' claim. legalName/rfc are the company
-  chosen in SIGER (with several results the container picks the one the report talks about).
+  searchName?, aliases?, matchReason?, fems?, candidates?, partners?, representatives?, cost?, error?,
+  folio? }; status ok | no_match | multiple | error. Only over a 'running' claim. legalName/rfc are the
+  company chosen in SIGER (with several results the container picks the one the report talks about).
+  representatives = current legal representative(s), same shape as partners plus role; a person can be
+  in both lists. Every lookup returned (get, claim, attach) carries both.
 POST /v1/siger/get — the lookup of one company. Body { clientId, entityId }.
 POST /v1/siger/resolve — choose the company of a 'multiple' lookup without paying again: Body { clientId,
-  entityId, legalName, rfc?, fems?, partners, matchReason? ("report_context" or "manual") }. The partners
-  are the ones already obtained in the paid lookup; the lookup becomes 'ok' (save them to the report next).
+  entityId, legalName, rfc?, fems?, partners, representatives?, matchReason? ("report_context" or "manual") }.
+  The partners (or representatives: at least one of the two) are the ones already obtained in the paid
+  lookup; the lookup becomes 'ok' (save them to the report next).
 POST /v1/siger/attach — the partners were written to a newer report of the company. Body { clientId,
   entityId, folio }. pending returns attachOnly: true for those reports: take the partners from get (no
   SIGER, no cost), save them to the report, then attach so the company leaves pending.
@@ -162,6 +165,7 @@ def _row(r: dict[str, Any]) -> dict[str, Any]:
         "fems": r.get("fems") or [],
         "candidates": r.get("candidates") or [],
         "partners": r.get("partners") or [],
+        "representatives": r.get("representatives") or [],
         "cost": float(r["cost"]) if r.get("cost") is not None else None,
         "error": r.get("error"),
         "reusedFrom": r.get("reused_from"),
@@ -178,6 +182,7 @@ def _candidate(r: dict[str, Any]) -> dict[str, Any]:
         "aliases": r.get("aliases") or [],
         "fems": r.get("fems") or [],
         "partners": len(r.get("partners") or []),
+        "representatives": len(r.get("representatives") or []),
         "updatedAt": r.get("updated_at"),
     }
 
@@ -200,7 +205,7 @@ def handle_pending(body: dict[str, Any]) -> dict[str, Any]:
         rows = conn.execute(
             """
             SELECT x.*, s.status AS lookup_status, s.attempts AS lookup_attempts,
-                   (s.status = 'ok' AND jsonb_array_length(s.partners) > 0) AS attach_only
+                   (s.status = 'ok' AND (jsonb_array_length(s.partners) > 0 OR jsonb_array_length(s.representatives) > 0)) AS attach_only
               FROM (
               SELECT DISTINCT ON (e.id)
                      e.id AS entity_id, e.client_id, e.name, e.legal_name, e.rfc,
@@ -219,8 +224,9 @@ def handle_pending(body: dict[str, Any]) -> dict[str, Any]:
             LEFT JOIN public.siger_lookups s ON s.client_id = x.client_id AND s.entity_id = x.entity_id
              WHERE s.id IS NULL
                 OR (s.status = 'error' AND s.attempts < %s)
-                -- Already answered with partners: a newer report of the company still lacks them.
-                OR (s.status = 'ok' AND jsonb_array_length(s.partners) > 0 AND s.report_folio IS DISTINCT FROM x.folio)
+                -- Already answered with partners or representatives: a newer report of the company still lacks them.
+                OR (s.status = 'ok' AND (jsonb_array_length(s.partners) > 0 OR jsonb_array_length(s.representatives) > 0)
+                    AND s.report_folio IS DISTINCT FROM x.folio)
              ORDER BY x.report_created_at
              LIMIT %s
             """,
@@ -276,15 +282,15 @@ def _copy(conn: Any, client_id: int, entity_id: str, source: dict[str, Any], fol
         """
         INSERT INTO public.siger_lookups
           (client_id, entity_id, report_folio, search_name, rfc, legal_name, legal_key, base_key, aliases,
-           match_reason, status, fems, candidates, partners, cost, reused_from)
-        VALUES (%s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, 'reused', %s, %s, %s, %s, 0, %s)
+           match_reason, status, fems, candidates, partners, representatives, cost, reused_from)
+        VALUES (%s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, 'reused', %s, %s, %s, %s, %s, 0, %s)
         ON CONFLICT (client_id, entity_id) DO UPDATE
            SET report_folio = COALESCE(EXCLUDED.report_folio, siger_lookups.report_folio),
                search_name = COALESCE(EXCLUDED.search_name, siger_lookups.search_name),
                rfc = EXCLUDED.rfc, legal_name = EXCLUDED.legal_name, legal_key = EXCLUDED.legal_key,
                base_key = EXCLUDED.base_key, aliases = EXCLUDED.aliases, match_reason = 'reused',
                status = EXCLUDED.status, fems = EXCLUDED.fems, candidates = EXCLUDED.candidates,
-               partners = EXCLUDED.partners, cost = 0, reused_from = EXCLUDED.reused_from, error = NULL,
+               partners = EXCLUDED.partners, representatives = EXCLUDED.representatives, cost = 0, reused_from = EXCLUDED.reused_from, error = NULL,
                updated_at = now()
          WHERE siger_lookups.status = 'error'
         RETURNING *
@@ -293,7 +299,7 @@ def _copy(conn: Any, client_id: int, entity_id: str, source: dict[str, Any], fol
             client_id, entity_id, folio, search_name, source.get("rfc"), source.get("legal_name"),
             source.get("legal_key"), source.get("base_key"), Json(_aliases(source.get("aliases") or [], search_name)),
             source["status"], Json(source.get("fems") or []), Json(source.get("candidates") or []),
-            Json(source.get("partners") or []), source["id"],
+            Json(source.get("partners") or []), Json(source.get("representatives") or []), source["id"],
         ),
     ).fetchone()
 
@@ -442,7 +448,7 @@ def handle_record(body: dict[str, Any]) -> dict[str, Any]:
                    search_name = COALESCE(%s, search_name),
                    aliases = %s, match_reason = %s, fems = %s, candidates = %s, partners = %s,
                    cost = COALESCE(%s, cost), error = %s,
-                   report_folio = COALESCE(%s, report_folio), updated_at = now()
+                   report_folio = COALESCE(%s, report_folio), representatives = %s, updated_at = now()
              WHERE client_id = %s AND entity_id = %s::uuid AND status = 'running'
             RETURNING *
             """,
@@ -461,6 +467,7 @@ def handle_record(body: dict[str, Any]) -> dict[str, Any]:
                 cost,
                 _text(body.get("error"), 1500) if status == "error" else None,
                 _text(body.get("folio"), 120),
+                Json(_list(body.get("representatives"), 200)),
                 client_id,
                 entity_id,
             ),
@@ -491,8 +498,9 @@ def handle_resolve(body: dict[str, Any]) -> dict[str, Any]:
     client_id, entity_id = ids
     legal_name = _text(body.get("legalName"), 300)
     partners = _list(body.get("partners"), 200)
-    if not legal_name or not partners:
-        return _resp(400, {"code": "BAD_REQUEST", "message": "legalName y partners requeridos."})
+    representatives = _list(body.get("representatives"), 200)
+    if not legal_name or not (partners or representatives):
+        return _resp(400, {"code": "BAD_REQUEST", "message": "legalName y partners o representatives requeridos."})
     reason = _text(body.get("matchReason"), 40) or "manual"
     with _conn() as conn:
         row = conn.execute(
@@ -500,7 +508,7 @@ def handle_resolve(body: dict[str, Any]) -> dict[str, Any]:
             UPDATE public.siger_lookups
                SET status = 'ok', legal_name = %s, legal_key = %s, base_key = %s,
                    rfc = COALESCE(%s, rfc), fems = %s, partners = %s, match_reason = %s,
-                   aliases = aliases || %s::jsonb, updated_at = now()
+                   aliases = aliases || %s::jsonb, representatives = %s, updated_at = now()
              WHERE client_id = %s AND entity_id = %s::uuid AND status = 'multiple'
             RETURNING *
             """,
@@ -513,6 +521,7 @@ def handle_resolve(body: dict[str, Any]) -> dict[str, Any]:
                 Json(partners),
                 reason,
                 Json(_aliases(body.get("aliases") or [])),
+                Json(representatives),
                 client_id,
                 entity_id,
             ),
