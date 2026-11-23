@@ -354,14 +354,14 @@ def test_pending_returns_a_failed_lookup_with_attempts_left_even_before_since(mo
     # Newer reports from the cursor, or an older one whose lookup failed with attempts left (never before the floor).
     assert "f.status = 'error' AND f.attempts < %s" in sql
     assert params[0].isoformat().startswith("2026-11-23T02:00:00") and params[1].isoformat().startswith("2026-11-18T06:00:00")
-    assert params[2] == 8 and params[-2] == 8
+    assert params[2] == 20 and params[-2] == 20
 
 
-def test_claim_retakes_an_error_until_the_eighth_attempt():
+def test_claim_retakes_an_error_until_the_twentieth_attempt():
     mod = _load(FakeConn([ENTITY, _lookup(status="error", attempts=3), None, _lookup(status="running", attempts=4)]))
     status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1", "force": True})
     assert status == 200 and body["claimed"] is True and body["lookup"]["attempts"] == 4
-    mod = _load(FakeConn([ENTITY, _lookup(status="error", attempts=8)]))
+    mod = _load(FakeConn([ENTITY, _lookup(status="error", attempts=20)]))
     status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1"})
-    assert status == 200 and body["claimed"] is False and body["lookup"]["attempts"] == 8
-    assert mod.MAX_ATTEMPTS == 8
+    assert status == 200 and body["claimed"] is False and body["lookup"]["attempts"] == 20
+    assert mod.MAX_ATTEMPTS == 20

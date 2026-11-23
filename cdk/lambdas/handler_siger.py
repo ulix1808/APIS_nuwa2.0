@@ -58,8 +58,8 @@ from nuwa_monitoring_worker import monitoring_worker_secret_ok
 from nuwa_obs_log import log_handler_enter, log_phase
 from nuwa_pg_dispatch import _conn
 
-# The container's push queue retries 3 times a minute apart; the 30-min tick takes attempts 4 to 8.
-MAX_ATTEMPTS = 8
+# The container's push queue retries 3 times a minute apart; the tick (every 3 hours) takes attempts 4 to 20.
+MAX_ATTEMPTS = 20
 FINAL_STATUSES = ("ok", "no_match", "multiple", "error")
 INACTIVE_ENTITY_STATUSES = ("deleted", "inactive")
 # Legal forms dropped from the base key: "Gráficas Corona, S.A. de C.V." and "Gráficas Corona" share it.
