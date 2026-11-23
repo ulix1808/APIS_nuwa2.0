@@ -5,7 +5,9 @@ POST /v1/siger/pending — companies to look up. Body { clientIds: [int], since?
   Organizations with an active report created in [since, until) and no lookup yet (or a failed one
   with attempts left). since/until are ISO dates or instants; since never goes before SIGER_START_AT
   (reports before the container went live are never looked up), so the container can keep its own
-  cursor (last reportCreatedAt seen) and ask only for what is newer.
+  cursor (last reportCreatedAt seen) and ask only for what is newer. A failed lookup with attempts left
+  comes back even when its report is older than since (the cursor already passed it), never before
+  SIGER_START_AT.
   Returns the latest report of each: folio + createdByUserId (actor for the BFF save-report update).
   Also companies already answered with partners whose latest report is not the one that got them
   (attachOnly: true): a new screening of a known company gets its partners without paying again.
@@ -56,7 +58,8 @@ from nuwa_monitoring_worker import monitoring_worker_secret_ok
 from nuwa_obs_log import log_handler_enter, log_phase
 from nuwa_pg_dispatch import _conn
 
-MAX_ATTEMPTS = 3
+# The container's push queue retries 3 times a minute apart; the 30-min tick takes attempts 4 to 8.
+MAX_ATTEMPTS = 8
 FINAL_STATUSES = ("ok", "no_match", "multiple", "error")
 INACTIVE_ENTITY_STATUSES = ("deleted", "inactive")
 # Legal forms dropped from the base key: "Gráficas Corona, S.A. de C.V." and "Gráficas Corona" share it.
@@ -214,7 +217,11 @@ def handle_pending(body: dict[str, Any]) -> dict[str, Any]:
                 JOIN public.entities e
                   ON e.client_id = r.client_id AND (e.id = r.entity_id OR e.last_report_folio = r.folio)
                WHERE r.status = 'active'
-                 AND r.created_at >= %s
+                 AND (r.created_at >= %s
+                      OR (r.created_at >= %s AND EXISTS (
+                            SELECT 1 FROM public.siger_lookups f
+                             WHERE f.client_id = r.client_id AND f.entity_id = e.id
+                               AND f.status = 'error' AND f.attempts < %s)))
                  AND (%s::timestamptz IS NULL OR r.created_at < %s::timestamptz)
                  AND r.client_id = ANY(%s::int[])
                  AND e.party_type = 'organization'
@@ -230,7 +237,7 @@ def handle_pending(body: dict[str, Any]) -> dict[str, Any]:
              ORDER BY x.report_created_at
              LIMIT %s
             """,
-            (since, until, until, client_ids, list(INACTIVE_ENTITY_STATUSES), MAX_ATTEMPTS, limit),
+            (since, floor, MAX_ATTEMPTS, until, until, client_ids, list(INACTIVE_ENTITY_STATUSES), MAX_ATTEMPTS, limit),
         ).fetchall()
     return _resp(
         200,

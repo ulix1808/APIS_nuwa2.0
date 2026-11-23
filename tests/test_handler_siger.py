@@ -119,7 +119,7 @@ def test_pending_never_goes_before_start(monkeypatch):
     assert status == 200
     assert body["since"].startswith("2026-11-18T06:00:00")
     params = conn.calls[0][1]
-    assert params[3] == [8, 9]
+    assert params[5] == [8, 9]
     assert "e.party_type = 'organization'" in conn.calls[0][0]
 
 
@@ -340,3 +340,28 @@ def test_resolve_accepts_only_representatives():
     status, body = _call(mod, "resolve", {"clientId": 1, "entityId": "e2", "legalName": "X", "partners": [], "representatives": [REP]})
     assert status == 200 and body["lookup"]["representatives"] == [REP]
     assert getattr(conn.calls[0][1][-3], "obj", conn.calls[0][1][-3]) == [REP]
+
+
+def test_pending_returns_a_failed_lookup_with_attempts_left_even_before_since(monkeypatch):
+    monkeypatch.setenv("SIGER_START_AT", "2026-11-18T06:00:00Z")
+    row = {"entity_id": "e1", "client_id": 1, "name": "Gráficas Corona", "legal_name": None, "rfc": None, "folio": "F1",
+           "report_created_at": "t", "created_by_user_id": 5, "lookup_status": "error", "lookup_attempts": 3, "attach_only": False}
+    conn = FakeConn([[row]])
+    mod = _load(conn)
+    status, body = _call(mod, "pending", {"clientIds": [1], "since": "2026-11-23T02:00:00Z"})
+    assert status == 200 and body["companies"][0]["attempts"] == 3 and body["companies"][0]["previousStatus"] == "error"
+    sql, params = conn.calls[0]
+    # Newer reports from the cursor, or an older one whose lookup failed with attempts left (never before the floor).
+    assert "f.status = 'error' AND f.attempts < %s" in sql
+    assert params[0].isoformat().startswith("2026-11-23T02:00:00") and params[1].isoformat().startswith("2026-11-18T06:00:00")
+    assert params[2] == 8 and params[-2] == 8
+
+
+def test_claim_retakes_an_error_until_the_eighth_attempt():
+    mod = _load(FakeConn([ENTITY, _lookup(status="error", attempts=3), None, _lookup(status="running", attempts=4)]))
+    status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1", "force": True})
+    assert status == 200 and body["claimed"] is True and body["lookup"]["attempts"] == 4
+    mod = _load(FakeConn([ENTITY, _lookup(status="error", attempts=8)]))
+    status, body = _call(mod, "claim", {"clientId": 8, "entityId": "e1"})
+    assert status == 200 and body["claimed"] is False and body["lookup"]["attempts"] == 8
+    assert mod.MAX_ATTEMPTS == 8
