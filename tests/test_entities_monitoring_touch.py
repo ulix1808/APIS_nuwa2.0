@@ -276,6 +276,10 @@ def test_siger_pending_alert_refreshes_the_open_one(mock_conn, _ent) -> None:
     _use([[], {"id": "a-new", "created_at": None, "status": "new"}])
     out = entities_alerts_create_pg(body)
     assert out["alertId"] == "a-new" and "updated" not in out
+    # The 20th failure (exhausted, pendingRetry false) refreshes the same pending card.
+    _use([{"id": "a-open", "created_at": None, "status": "new"}])
+    out = entities_alerts_create_pg({**body, "payload": {"candidates": [{"legalName": "EMPRESA", "pendingRetry": False, "exhausted": True}]}})
+    assert out["alertId"] == "a-open" and out["updated"] is True
     # An "elegir empresa" card (no pendingRetry) always inserts: one statement only.
     _use([{"id": "a-multi", "created_at": None, "status": "new"}])
     out = entities_alerts_create_pg({**body, "payload": {"candidates": [{"legalName": "A"}, {"legalName": "B"}]}})

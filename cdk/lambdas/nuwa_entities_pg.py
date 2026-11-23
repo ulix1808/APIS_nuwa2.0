@@ -992,7 +992,10 @@ def entities_monitoring_run_finish_pg(body: dict[str, Any]) -> dict[str, Any]:
 
 def _has_pending_candidate(payload: dict[str, Any]) -> bool:
     cands = payload.get("candidates") if isinstance(payload, dict) else None
-    return isinstance(cands, list) and any(isinstance(c, dict) and c.get("pendingRetry") is True for c in cands)
+    # exhausted (failed all 20 retries) also closes over the pending card instead of leaving it open.
+    return isinstance(cands, list) and any(
+        isinstance(c, dict) and (c.get("pendingRetry") is True or c.get("exhausted") is True) for c in cands
+    )
 
 
 def entities_alerts_create_pg(body: dict[str, Any]) -> dict[str, Any]:
@@ -1014,8 +1017,9 @@ def entities_alerts_create_pg(body: dict[str, Any]) -> dict[str, Any]:
     if not ent:
         raise SupabaseRestError(403, "entityId no pertenece a este clientId")
 
-    # SIGER "ficha pendiente" (nuwa-siger, one per failed retry up to 20): an open pending card of the same
-    # entity is refreshed instead of adding another. An open "elegir empresa" card (no pendingRetry) is left alone.
+    # SIGER "ficha pendiente" (nuwa-siger, one per failed retry up to 20, the last one exhausted): an open
+    # pending card of the same entity is refreshed instead of adding another. An open "elegir empresa" card
+    # (no pendingRetry) is left alone.
     pending = alert_type == "siger_candidates" and _has_pending_candidate(payload)
     sql = """
     INSERT INTO public.entity_alerts (
