@@ -990,6 +990,11 @@ def entities_monitoring_run_finish_pg(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _has_pending_candidate(payload: dict[str, Any]) -> bool:
+    cands = payload.get("candidates") if isinstance(payload, dict) else None
+    return isinstance(cands, list) and any(isinstance(c, dict) and c.get("pendingRetry") is True for c in cands)
+
+
 def entities_alerts_create_pg(body: dict[str, Any]) -> dict[str, Any]:
     client_id = int(body["clientId"])
     entity_id = str(body["entityId"])
@@ -1009,6 +1014,9 @@ def entities_alerts_create_pg(body: dict[str, Any]) -> dict[str, Any]:
     if not ent:
         raise SupabaseRestError(403, "entityId no pertenece a este clientId")
 
+    # SIGER "ficha pendiente" (nuwa-siger, one per failed retry up to 20): an open pending card of the same
+    # entity is refreshed instead of adding another. An open "elegir empresa" card (no pendingRetry) is left alone.
+    pending = alert_type == "siger_candidates" and _has_pending_candidate(payload)
     sql = """
     INSERT INTO public.entity_alerts (
       client_id, entity_id, alert_type, severity, title, description, payload, status
@@ -1016,6 +1024,35 @@ def entities_alerts_create_pg(body: dict[str, Any]) -> dict[str, Any]:
     RETURNING id, created_at, status
     """
     with _conn() as conn:
+        if pending:
+            row = conn.execute(
+                """
+                UPDATE public.entity_alerts a
+                   SET severity = %s, title = %s, description = %s, payload = %s
+                 WHERE a.id = (
+                       SELECT o.id FROM public.entity_alerts o
+                        WHERE o.client_id = %s AND o.entity_id = %s::uuid
+                          AND o.alert_type = 'siger_candidates' AND o.status = 'new'
+                          AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(o.payload->'candidates', '[]'::jsonb)) c
+                                       WHERE c->>'pendingRetry' = 'true')
+                        ORDER BY o.created_at DESC LIMIT 1)
+                RETURNING id, created_at, status
+                """,
+                [severity, title, str(description) if description is not None else None, Json(payload), client_id, entity_id],
+            ).fetchone()
+            if row:
+                conn.commit()
+                return {
+                    "alertId": str(row["id"]),
+                    "clientId": client_id,
+                    "entityId": entity_id,
+                    "alertType": alert_type,
+                    "severity": severity,
+                    "title": title,
+                    "status": row["status"],
+                    "createdAt": _iso_z(row.get("created_at")),
+                    "updated": True,
+                }
         row = conn.execute(
             sql,
             [

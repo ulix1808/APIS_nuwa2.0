@@ -251,6 +251,37 @@ def test_alert_run_failed_allowed(mock_conn, _ent) -> None:
     assert out["alertType"] == "run_failed"
 
 
+@mock.patch("nuwa_entities_pg._get_entity_row", return_value={"id": "e1"})
+@mock.patch("nuwa_entities_pg._conn")
+def test_siger_pending_alert_refreshes_the_open_one(mock_conn, _ent) -> None:
+    # nuwa-siger retries a failed file up to 20 times: one open "ficha pendiente" card per entity, refreshed.
+    body = {
+        "clientId": 1, "entityId": "e1", "alertType": "siger_candidates", "title": "SIGER: ficha pendiente",
+        "payload": {"folio": "SE-1", "candidates": [{"legalName": "EMPRESA", "fem": "1", "pendingRetry": True}]},
+    }
+    conns: list[_FakeConn] = []
+
+    def _use(script):
+        @contextmanager
+        def _cm():
+            c = _FakeConn(script)
+            conns.append(c)
+            yield c
+        mock_conn.side_effect = _cm
+
+    _use([{"id": "a-open", "created_at": None, "status": "new"}])
+    out = entities_alerts_create_pg(body)
+    assert out["alertId"] == "a-open" and out["updated"] is True and conns[-1].committed
+    # No open pending card: insert a new one.
+    _use([[], {"id": "a-new", "created_at": None, "status": "new"}])
+    out = entities_alerts_create_pg(body)
+    assert out["alertId"] == "a-new" and "updated" not in out
+    # An "elegir empresa" card (no pendingRetry) always inserts: one statement only.
+    _use([{"id": "a-multi", "created_at": None, "status": "new"}])
+    out = entities_alerts_create_pg({**body, "payload": {"candidates": [{"legalName": "A"}, {"legalName": "B"}]}})
+    assert out["alertId"] == "a-multi" and "updated" not in out
+
+
 def test_alert_unknown_type_rejected() -> None:
     try:
         entities_alerts_create_pg(
