@@ -119,8 +119,23 @@ def test_pending_never_goes_before_start(monkeypatch):
     assert status == 200
     assert body["since"].startswith("2026-11-18T06:00:00")
     params = conn.calls[0][1]
-    assert params[5] == [8, 9]
+    assert params[5] == [8, 9] and params[7] is False
     assert "e.party_type = 'organization'" in conn.calls[0][0]
+
+
+def test_pending_for_every_client_that_operates_in_mexico(monkeypatch):
+    # Prod (23 nov 2026): SIGER for every client with Mexico among its operating countries, no fixed list.
+    monkeypatch.setenv("SIGER_START_AT", "2026-11-18T06:00:00Z")
+    conn = FakeConn([[]])
+    mod = _load(conn)
+    status, _ = _call(mod, "pending", {"operatingCountry": "Mexico"})
+    assert status == 200
+    sql, params = conn.calls[0]
+    assert params[5] is None and params[6] is None and params[7] is True
+    assert "'mexico' = ANY(c.operating_countries)" in sql and "operating_countries IS NULL" in sql and "'suspended'" in sql
+    # Neither a list nor the country: refused.
+    status, _ = _call(_load(FakeConn([[]])), "pending", {})
+    assert status == 400
 
 
 def test_pending_later_since_wins_and_bad_date_is_400(monkeypatch):

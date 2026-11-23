@@ -1,7 +1,9 @@
 """
 SIGER partners (nuwa-siger container). Worker only: x-monitoring-worker-secret.
 
-POST /v1/siger/pending — companies to look up. Body { clientIds: [int], since?, until?, limit? }.
+POST /v1/siger/pending — companies to look up. Body { clientIds: [int] | operatingCountry: "mexico", since?,
+  until?, limit? }. operatingCountry "mexico": every active client that operates in Mexico (operating_countries
+  has 'mexico', or is empty: Mexico is the default), instead of a fixed list.
   Organizations with an active report created in [since, until) and no lookup yet (or a failed one
   with attempts left). since/until are ISO dates or instants; since never goes before SIGER_START_AT
   (reports before the container went live are never looked up), so the container can keep its own
@@ -201,8 +203,9 @@ def handle_pending(body: dict[str, Any]) -> dict[str, Any]:
     since = max(floor, asked) if asked else floor
     until = _instant(body.get("until"))
     client_ids = sorted({n for n in (_int(c) for c in _list(body.get("clientIds"), 500)) if n})
-    if not client_ids:
-        return _resp(400, {"code": "BAD_REQUEST", "message": "clientIds requerido (lista de clientes habilitados)."})
+    mexico = str(body.get("operatingCountry") or "").strip().lower() == "mexico"
+    if not client_ids and not mexico:
+        return _resp(400, {"code": "BAD_REQUEST", "message": "clientIds u operatingCountry=mexico requerido."})
     limit = max(1, min(_int(body.get("limit")) or 50, 200))
     with _conn() as conn:
         rows = conn.execute(
@@ -223,7 +226,14 @@ def handle_pending(body: dict[str, Any]) -> dict[str, Any]:
                              WHERE f.client_id = r.client_id AND f.entity_id = e.id
                                AND f.status = 'error' AND f.attempts < %s)))
                  AND (%s::timestamptz IS NULL OR r.created_at < %s::timestamptz)
-                 AND r.client_id = ANY(%s::int[])
+                 AND (%s::int[] IS NULL OR r.client_id = ANY(%s::int[]))
+                 -- operatingCountry=mexico: active clients that operate in Mexico (no countries = Mexico, the default).
+                 AND (NOT %s OR EXISTS (
+                       SELECT 1 FROM public.clients c
+                        WHERE c.id = r.client_id
+                          AND COALESCE(c.status, 'active') <> 'suspended'
+                          AND (c.operating_countries IS NULL OR cardinality(c.operating_countries) = 0
+                               OR 'mexico' = ANY(c.operating_countries))))
                  AND e.party_type = 'organization'
                  AND e.status <> ALL(%s::text[])
                ORDER BY e.id, r.created_at DESC
@@ -237,7 +247,11 @@ def handle_pending(body: dict[str, Any]) -> dict[str, Any]:
              ORDER BY x.report_created_at
              LIMIT %s
             """,
-            (since, floor, MAX_ATTEMPTS, until, until, client_ids, list(INACTIVE_ENTITY_STATUSES), MAX_ATTEMPTS, limit),
+            (
+                since, floor, MAX_ATTEMPTS, until, until,
+                client_ids or None, client_ids or None, mexico,
+                list(INACTIVE_ENTITY_STATUSES), MAX_ATTEMPTS, limit,
+            ),
         ).fetchall()
     return _resp(
         200,
